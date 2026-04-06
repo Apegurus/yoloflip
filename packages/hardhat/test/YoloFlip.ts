@@ -414,6 +414,13 @@ describe("YoloFlip", function () {
     expect(await yoloFlip.houseEdgeBP()).to.equal(500n);
   });
 
+  it("should revert claimPendingPayout when nothing is owed", async function () {
+    await expect(yoloFlip.connect(player).claimPendingPayout()).to.be.revertedWithCustomError(
+      yoloFlip,
+      "NoPayoutPending",
+    );
+  });
+
   it("should reject non-croupier calling settleBet", async function () {
     const { reveal, receipt } = await placeBet({ player, betMask: 1n, modulo: 2n });
     await mine(1);

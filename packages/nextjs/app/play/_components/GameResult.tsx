@@ -1,14 +1,7 @@
 "use client";
 
+import type { BetResult } from "../types";
 import { formatEther } from "viem";
-
-type BetResult = {
-  commit: bigint;
-  gambler: string;
-  dice: bigint;
-  payout: bigint;
-  modulo: bigint;
-};
 
 type GameResultProps = {
   lastResult: BetResult | null;

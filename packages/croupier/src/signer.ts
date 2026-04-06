@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { ethers } from "ethers";
 import { config } from "./config";
-import { storeReveal } from "./settler";
+import { storeReveal } from "./revealStore";
 
 /**
  * Creates the Express router for the commit signing API.

@@ -1,6 +1,6 @@
 "use client";
 
-type GameType = "coinflip" | "dice";
+import type { GameType } from "../types";
 
 type GameSelectorProps = {
   selectedGame: GameType;

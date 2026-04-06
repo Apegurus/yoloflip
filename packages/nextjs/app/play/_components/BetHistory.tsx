@@ -7,7 +7,7 @@ export const BetHistory = () => {
   const { data: events, isLoading } = useScaffoldEventHistory({
     contractName: "YoloFlip",
     eventName: "BetSettled",
-    fromBlock: 0n,
+    watch: true,
   });
 
   if (isLoading) {
@@ -37,12 +37,12 @@ export const BetHistory = () => {
               </tr>
             </thead>
             <tbody>
-              {recentBets.map((event, i) => {
+              {recentBets.map(event => {
                 const payout = event.args.payout ?? 0n;
                 const dice = event.args.dice ?? 0n;
                 const won = payout > 0n;
                 return (
-                  <tr key={i}>
+                  <tr key={event.args.commit?.toString()}>
                     <td>
                       <span className={`badge ${won ? "badge-success" : "badge-error"}`}>{won ? "WIN" : "LOSS"}</span>
                     </td>

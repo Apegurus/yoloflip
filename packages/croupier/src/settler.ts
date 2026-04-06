@@ -1,18 +1,7 @@
 import { ethers } from "ethers";
 import { YOLOFLIP_ABI } from "./abi";
 import { config } from "./config";
-
-// In-memory commit→reveal store. Process restart loses pending bets.
-// The settler must be started BEFORE players place bets for reveals to be tracked.
-const revealStore = new Map<string, bigint>();
-
-/**
- * Store a reveal for later settlement.
- * Called by the signer service when it generates a new commit.
- */
-export function storeReveal(commit: string, reveal: bigint): void {
-  revealStore.set(commit.toLowerCase(), reveal);
-}
+import { getReveal, deleteReveal, countReveals } from "./revealStore";
 
 export async function startSettler(
   provider: ethers.Provider,
@@ -21,6 +10,7 @@ export async function startSettler(
   const contract = new ethers.Contract(config.contractAddress, YOLOFLIP_ABI, wallet);
 
   console.log(`[Settler] Watching for BetPlaced events on ${config.contractAddress}`);
+  console.log(`[Settler] ${countReveals()} pending reveals recovered from database`);
 
   contract.on(
     "BetPlaced",
@@ -31,7 +21,7 @@ export async function startSettler(
         `[Settler] BetPlaced: commit=${commitKey}, gambler=${gambler}, amount=${ethers.formatEther(amount)} ETH`,
       );
 
-      const reveal = revealStore.get(commitKey.toLowerCase());
+      const reveal = getReveal(commitKey);
       if (reveal === undefined) {
         console.warn(`[Settler] No reveal found for commit ${commitKey} — bet placed before croupier started?`);
         return;
@@ -42,10 +32,9 @@ export async function startSettler(
 
       try {
         await settleBetOnChain(contract, provider, commit, reveal);
-        revealStore.delete(commitKey.toLowerCase());
+        deleteReveal(commitKey);
       } catch (error) {
         console.error(`[Settler] Failed to settle bet ${commitKey}:`, error);
-        // v1: no retry — expired bets can be refunded by the player
       }
     },
   );

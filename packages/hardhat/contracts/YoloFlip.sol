@@ -68,6 +68,10 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     event BetSettled(uint256 indexed commit, address indexed gambler, uint256 dice, uint256 payout);
     event BetRefunded(uint256 indexed commit, address indexed gambler, uint256 amount);
     event HouseEdgeChanged(uint256 newEdge);
+    event SecretSignerChanged(address newSigner);
+    event MinBetChanged(uint256 newMinBet);
+    event MaxProfitRatioChanged(uint256 newMaxProfitRatio);
+    event HouseFundsWithdrawn(address indexed recipient, uint256 amount);
 
     constructor(address admin, address croupier, address _secretSigner, uint256 _houseEdgeBP, uint256 _minBetAmount) {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -211,6 +215,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     function setSecretSigner(address _secretSigner) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_secretSigner == address(0)) revert ZeroAddress();
         secretSigner = _secretSigner;
+        emit SecretSignerChanged(_secretSigner);
     }
 
     function setHouseEdge(uint256 _houseEdgeBP) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -220,19 +225,24 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function setMinBet(uint256 _minBetAmount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_minBetAmount == 0) revert BetTooSmall();
         minBetAmount = _minBetAmount;
+        emit MinBetChanged(_minBetAmount);
     }
 
     function setMaxProfitRatio(uint256 _maxProfitRatio) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_maxProfitRatio > 1000) revert InvalidMaxProfitRatio();
         maxProfitRatio = _maxProfitRatio;
+        emit MaxProfitRatioChanged(_maxProfitRatio);
     }
 
-    function withdrawHouseFunds(address payable recipient, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function withdrawHouseFunds(address payable recipient, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         if (recipient == address(0)) revert ZeroAddress();
         uint256 available = address(this).balance - lockedInBets;
         if (amount > available) revert WithdrawTooLarge();
-        recipient.transfer(amount);
+        emit HouseFundsWithdrawn(recipient, amount);
+        (bool success, ) = recipient.call{value: amount}("");
+        if (!success) revert TransferFailed();
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {

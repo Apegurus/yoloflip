@@ -1,24 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { BetForm } from "./_components/BetForm";
 import { BetHistory } from "./_components/BetHistory";
 import { GameResult } from "./_components/GameResult";
 import { GameSelector } from "./_components/GameSelector";
+import type { BetResult, GameType } from "./types";
 import type { NextPage } from "next";
 import { useAccount } from "wagmi";
-import { useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
+import { useScaffoldWatchContractEvent, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 import { notification } from "~~/utils/scaffold-eth";
-
-type GameType = "coinflip" | "dice";
-
-type BetResult = {
-  commit: bigint;
-  gambler: string;
-  dice: bigint;
-  payout: bigint;
-  modulo: bigint;
-};
 
 type CroupierCommitResponse = {
   commit: string;
@@ -31,12 +22,34 @@ type CroupierCommitResponse = {
 const CROUPIER_URL = process.env.NEXT_PUBLIC_CROUPIER_URL ?? "http://localhost:3001";
 
 const Play: NextPage = () => {
-  const { isConnected } = useAccount();
+  const { address, isConnected } = useAccount();
   const [selectedGame, setSelectedGame] = useState<GameType>("coinflip");
   const [lastResult, setLastResult] = useState<BetResult | null>(null);
+  const pendingModuloRef = useRef<bigint>(2n);
 
   const { writeContractAsync, isPending } = useScaffoldWriteContract({
     contractName: "YoloFlip",
+  });
+
+  useScaffoldWatchContractEvent({
+    contractName: "YoloFlip",
+    eventName: "BetSettled",
+    onLogs: logs => {
+      for (const log of logs) {
+        const { commit, gambler, dice, payout } = log.args;
+        if (commit === undefined || gambler === undefined || dice === undefined || payout === undefined) continue;
+        if (gambler.toLowerCase() !== address?.toLowerCase()) continue;
+
+        setLastResult({
+          commit,
+          gambler,
+          dice,
+          payout,
+          modulo: pendingModuloRef.current,
+        });
+        notification.info(payout > 0n ? "You won!" : "Better luck next time!");
+      }
+    },
   });
 
   const handlePlaceBet = async (betMask: bigint, modulo: bigint, betAmount: bigint) => {
@@ -50,6 +63,8 @@ const Play: NextPage = () => {
       if (!res.ok) throw new Error("Failed to get commit from croupier");
       const { commit, commitLastBlock, v, r, s } = (await res.json()) as CroupierCommitResponse;
 
+      pendingModuloRef.current = modulo;
+
       await writeContractAsync({
         functionName: "placeBet",
         args: [betMask, modulo, BigInt(commitLastBlock), BigInt(commit), v, r as `0x${string}`, s as `0x${string}`],
@@ -57,7 +72,6 @@ const Play: NextPage = () => {
       });
 
       notification.success("Bet placed! Waiting for result...");
-      setLastResult(null);
     } catch (error) {
       console.error("Failed to place bet:", error);
       notification.error("Failed to place bet. Is the croupier running?");
@@ -68,7 +82,7 @@ const Play: NextPage = () => {
     <div className="flex items-center flex-col grow pt-10">
       <div className="px-5 w-full max-w-4xl">
         <h1 className="text-center mb-8">
-          <span className="block text-4xl font-bold">🎰 YoloFlip</span>
+          <span className="block text-4xl font-bold">YoloFlip</span>
           <span className="block text-lg opacity-70 mt-2">Provably fair commit-reveal gambling</span>
         </h1>
 

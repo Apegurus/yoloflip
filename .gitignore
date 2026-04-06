@@ -22,3 +22,4 @@ node_modules
 # cli
 dist
 packages/hardhat/gasReporterOutput.json
+packages/croupier/reveals.db

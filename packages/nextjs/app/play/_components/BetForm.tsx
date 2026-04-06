@@ -1,10 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import type { GameType } from "../types";
 import { EtherInput } from "@scaffold-ui/components";
 import { parseEther } from "viem";
-
-type GameType = "coinflip" | "dice";
 
 type BetFormProps = {
   gameType: GameType;
