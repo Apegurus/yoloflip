@@ -8,6 +8,7 @@ import { createSignerRouter } from "./signer";
 import { pruneOldReveals } from "./revealStore";
 
 const app = express();
+if (config.trustProxy) app.set("trust proxy", 1);
 app.use(express.json());
 app.use(cors({
   origin: process.env["ALLOWED_ORIGIN"] ?? "http://localhost:3000",
@@ -65,5 +66,17 @@ main().catch(error => {
   console.error(`[YoloFlip Croupier] Fatal error:`, error);
   process.exit(1);
 });
+
+// L4: graceful shutdown
+function shutdown(signal: string) {
+  console.log(`[YoloFlip Croupier] Received ${signal}, shutting down gracefully...`);
+  // Allow in-flight settlement txs to complete (5s grace period)
+  setTimeout(() => {
+    console.log(`[YoloFlip Croupier] Shutdown complete`);
+    process.exit(0);
+  }, 5000);
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 export { app };

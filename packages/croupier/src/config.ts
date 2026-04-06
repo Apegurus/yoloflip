@@ -17,4 +17,6 @@ export const config = {
   contractAddress: requireEnv("CONTRACT_ADDRESS"),
   port: parseInt(process.env["PORT"] ?? "3001", 10),
   commitBlockOffset: parseInt(process.env["COMMIT_BLOCK_OFFSET"] ?? "100", 10),
+  blockWaitMs: parseInt(process.env["BLOCK_WAIT_MS"] ?? "2000", 10),
+  trustProxy: process.env["TRUST_PROXY"] === "true",
 };

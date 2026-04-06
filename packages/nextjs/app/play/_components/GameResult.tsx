@@ -26,11 +26,13 @@ export const GameResult = ({ lastResult }: GameResultProps) => {
     );
   }
 
-  const { dice, payout, modulo } = lastResult;
+  const { dice, payout, modulo, token } = lastResult;
   const won = payout > 0n;
   const isCoinflip = modulo === 2n;
   const isDice = modulo === 6n;
   const isRoulette = modulo === 37n;
+  const isETH = !token || token === "0x0000000000000000000000000000000000000000";
+  const payoutLabel = isETH ? "ETH" : "tokens";
 
   const renderResult = () => {
     if (isCoinflip) {
@@ -80,7 +82,11 @@ export const GameResult = ({ lastResult }: GameResultProps) => {
       <div className="card-body text-center">
         <h2 className="card-title justify-center text-2xl">{won ? "🎉 You Won!" : "😢 You Lost"}</h2>
         {renderResult()}
-        {won && <p className="font-bold text-xl">Payout: {formatEther(payout)} ETH</p>}
+        {won && (
+          <p className="font-bold text-xl">
+            Payout: {formatEther(payout)} {payoutLabel}
+          </p>
+        )}
       </div>
     </div>
   );

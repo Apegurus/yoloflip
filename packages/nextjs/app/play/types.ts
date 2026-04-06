@@ -6,4 +6,5 @@ export type BetResult = {
   dice: bigint;
   payout: bigint;
   modulo: bigint;
+  token: string;
 };

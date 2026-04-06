@@ -40,6 +40,8 @@ export const BetHistory = () => {
               {recentBets.map(event => {
                 const payout = event.args.payout ?? 0n;
                 const dice = event.args.dice ?? 0n;
+                const token = event.args.token;
+                const isETH = !token || token === "0x0000000000000000000000000000000000000000";
                 const won = payout > 0n;
                 return (
                   <tr key={event.args.commit?.toString()}>
@@ -47,7 +49,7 @@ export const BetHistory = () => {
                       <span className={`badge ${won ? "badge-success" : "badge-error"}`}>{won ? "WIN" : "LOSS"}</span>
                     </td>
                     <td>{Number(dice)}</td>
-                    <td>{won ? `${formatEther(payout)} ETH` : "—"}</td>
+                    <td>{won ? `${formatEther(payout)} ${isETH ? "ETH" : "tokens"}` : "—"}</td>
                   </tr>
                 );
               })}

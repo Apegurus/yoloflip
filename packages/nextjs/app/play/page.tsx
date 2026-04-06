@@ -36,7 +36,7 @@ const Play: NextPage = () => {
     eventName: "BetSettled",
     onLogs: logs => {
       for (const log of logs) {
-        const { commit, gambler, dice, payout, modulo } = log.args;
+        const { commit, gambler, dice, payout, modulo, token } = log.args;
         if (commit === undefined || gambler === undefined || dice === undefined || payout === undefined) continue;
         if (gambler.toLowerCase() !== address?.toLowerCase()) continue;
 
@@ -46,6 +46,7 @@ const Play: NextPage = () => {
           dice,
           payout,
           modulo: modulo ?? 2n,
+          token: token ?? "0x0000000000000000000000000000000000000000",
         });
         notification.info(payout > 0n ? "You won!" : "Better luck next time!");
       }

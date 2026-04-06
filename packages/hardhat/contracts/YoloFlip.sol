@@ -55,8 +55,14 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     // Pull-fallback for failed sends (gambler => token => amount)
     mapping(address => mapping(address => uint256)) public pendingPayouts;
 
+    // M3: total pending payouts per token (subtracted from available bankroll)
+    mapping(address => uint256) public totalPendingPayouts;
+
     // Token whitelist (ETH is always allowed)
     mapping(address => bool) public allowedTokens;
+
+    // L1: per-token minimum bet (0 = use global minBetAmount)
+    mapping(address => uint256) public tokenMinBet;
 
     error BetAlreadyExists();
     error BetDoesNotExist();
@@ -78,6 +84,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     error TransferFailed();
     error TokenNotAllowed();
     error InvalidTokenBet();
+    error AmountOverflow();
 
     event BetPlaced(uint256 indexed commit, address indexed gambler, uint256 amount, uint256 betMask, uint256 modulo, address token, bool isOver);
     event BetSettled(uint256 indexed commit, address indexed gambler, uint256 dice, uint256 payout, uint256 modulo, address token);
@@ -88,6 +95,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     event MaxProfitRatioChanged(uint256 newMaxProfitRatio);
     event HouseFundsWithdrawn(address indexed recipient, uint256 amount, address token);
     event TokenAllowed(address indexed token, bool allowed);
+    event TokenMinBetChanged(address indexed token, uint256 newMinBet);
 
     constructor(address admin, address croupier, address _secretSigner, uint256 _houseEdgeBP, uint256 _minBetAmount) {
         // H1: validate constructor arguments
@@ -116,6 +124,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         bytes32 r,
         bytes32 s
     ) external payable whenNotPaused {
+        if (msg.value > type(uint128).max) revert AmountOverflow();
         _placeBet(PlaceBetParams({
             betMask: betMask,
             modulo: modulo,
@@ -145,6 +154,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     ) external whenNotPaused {
         if (token == ETH_TOKEN) revert InvalidTokenBet();
         if (!allowedTokens[token]) revert TokenNotAllowed();
+        if (amount > type(uint128).max) revert AmountOverflow();
 
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 
@@ -181,7 +191,9 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         if (p.commitLastBlock > type(uint40).max) revert CommitExpired();
         if (block.number > p.commitLastBlock) revert CommitExpired();
         if (bets[p.commit].gambler != address(0)) revert BetAlreadyExists();
-        if (p.amount < minBetAmount) revert BetTooSmall();
+        // L1: use per-token min bet if set, otherwise global
+        uint256 effectiveMinBet = tokenMinBet[p.token] > 0 ? tokenMinBet[p.token] : minBetAmount;
+        if (p.amount < effectiveMinBet) revert BetTooSmall();
 
         bytes32 msgHash = keccak256(abi.encodePacked(uint40(p.commitLastBlock), p.commit, address(this)));
         if (ECDSA.recover(msgHash, p.v, p.r, p.s) != secretSigner) revert InvalidSignature();
@@ -295,6 +307,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         if (amount == 0) revert NoPayoutPending();
 
         pendingPayouts[msg.sender][token] = 0;
+        totalPendingPayouts[token] -= amount;
         if (token == ETH_TOKEN) {
             (bool success, ) = msg.sender.call{value: amount}("");
             if (!success) revert TransferFailed();
@@ -314,6 +327,11 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     }
 
     // --- Admin functions ---
+
+    function setTokenMinBet(address token, uint256 _minBet) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        tokenMinBet[token] = _minBet;
+        emit TokenMinBetChanged(token, _minBet);
+    }
 
     function setAllowedToken(address token, bool allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (token == ETH_TOKEN) revert InvalidTokenBet();
@@ -368,11 +386,16 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
     // --- Internal helpers ---
 
+    // M3: bankroll excludes both locked bets and pending (unclaimed) payouts
     function _bankroll(address token) internal view returns (uint256) {
+        uint256 balance;
         if (token == ETH_TOKEN) {
-            return address(this).balance;
+            balance = address(this).balance;
+        } else {
+            balance = IERC20(token).balanceOf(address(this));
         }
-        return IERC20(token).balanceOf(address(this));
+        uint256 pending = totalPendingPayouts[token];
+        return balance > pending ? balance - pending : 0;
     }
 
     // H2: use low-level call with SafeERC20-style return data handling to prevent
@@ -382,11 +405,13 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
             (bool success, ) = recipient.call{value: amount}("");
             if (!success) {
                 pendingPayouts[recipient][token] += amount;
+                totalPendingPayouts[token] += amount;
             }
         } else {
             (bool ok, bytes memory ret) = token.call(abi.encodeCall(IERC20.transfer, (recipient, amount)));
             if (!ok || (ret.length != 0 && !abi.decode(ret, (bool)))) {
                 pendingPayouts[recipient][token] += amount;
+                totalPendingPayouts[token] += amount;
             }
         }
     }

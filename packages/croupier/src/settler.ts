@@ -6,6 +6,13 @@ import { getReveal, deleteReveal, getAllReveals, countReveals } from "./revealSt
 const RETRY_INTERVAL_MS = 30_000;
 const inFlight = new Set<string>();
 
+// L3: simple sequential nonce queue to prevent nonce conflicts
+let txQueue: Promise<void> = Promise.resolve();
+function enqueueSettlement(fn: () => Promise<void>): Promise<void> {
+  txQueue = txQueue.then(fn, fn);
+  return txQueue;
+}
+
 export async function startSettler(
   provider: ethers.Provider,
   wallet: ethers.Wallet,
@@ -36,12 +43,12 @@ export async function startSettler(
         return;
       }
 
-      // Wait 1 block to ensure blockhash is available
-      await sleep(2000);
+      // L5: configurable block wait
+      await sleep(config.blockWaitMs);
 
       inFlight.add(commitKey);
       try {
-        await settleBetOnChain(contract, provider, commit, reveal);
+        await enqueueSettlement(() => settleBetOnChain(contract, provider, commit, reveal));
         deleteReveal(commitKey);
       } catch (error) {
         console.error(`[Settler] Failed to settle bet ${commitKey}:`, error);
@@ -93,7 +100,7 @@ async function retrySweep(contract: ethers.Contract, provider: ethers.Provider):
         continue;
       }
 
-      await settleBetOnChain(contract, provider, commitUint, reveal);
+      await enqueueSettlement(() => settleBetOnChain(contract, provider, commitUint, reveal));
       deleteReveal(commit);
     } catch (error) {
       console.error(`[Settler] Retry failed for ${commit}:`, error);

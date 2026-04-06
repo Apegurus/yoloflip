@@ -909,4 +909,119 @@ describe("YoloFlip", function () {
     const lockedAfterRefund = await yoloFlip.lockedInBets(ETH_TOKEN);
     expect(lockedAfterRefund).to.equal(0n);
   });
+
+  // ===================== ADDITIONAL COVERAGE TESTS =====================
+
+  it("L9: should place and settle a roulette bet (mod 37, red numbers bitmask)", async function () {
+    // Red numbers in European roulette: 1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36
+    const redNumbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36];
+    let redMask = 0n;
+    for (const n of redNumbers) {
+      redMask |= 1n << BigInt(n);
+    }
+    // 18 numbers selected out of 37
+    const { commit } = await placeBet({ player, betMask: redMask, modulo: 37n });
+    const bet = await yoloFlip.bets(commit);
+    expect(bet.modulo).to.equal(37n);
+    expect(bet.rollUnder).to.equal(18n); // popcount of 18 red numbers
+  });
+
+  it("L9: should reject bet exceeding maxProfit", async function () {
+    // Set maxProfitRatio very low so a standard bet exceeds it
+    await yoloFlip.connect(admin).setMaxProfitRatio(1n); // 0.01% of bankroll
+
+    // A coinflip bet with modulo=2, rollUnder=1 has ~2x payout
+    // With 10 ETH bankroll and 0.01% ratio, max profit = 0.001 ETH
+    // A 0.01 ETH bet would profit ~0.0096 ETH, exceeding 0.001 ETH
+    await expect(placeBet({ player, betMask: 1n, modulo: 2n })).to.be.revertedWithCustomError(
+      yoloFlip,
+      "ProfitExceedsMax",
+    );
+
+    // Restore
+    await yoloFlip.connect(admin).setMaxProfitRatio(500n);
+  });
+
+  it("L9: should handle concurrent bets from the same player", async function () {
+    const bet1 = await placeBet({ player, betMask: 1n, modulo: 2n });
+    const bet2 = await placeBet({ player, betMask: 2n, modulo: 2n });
+
+    const locked = await yoloFlip.lockedInBets(ETH_TOKEN);
+    const possibleWin = await yoloFlip.getWinAmount(defaultBetAmount, 2n, 1n);
+    expect(locked).to.equal(possibleWin * 2n);
+
+    // Settle both
+    await settleBet(bet1.reveal, bet1.receipt.blockNumber);
+    await settleBet(bet2.reveal, bet2.receipt.blockNumber);
+    expect(await yoloFlip.lockedInBets(ETH_TOKEN)).to.equal(0n);
+  });
+
+  it("L1: should use per-token minBet when set", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    const highMinBet = ethers.parseEther("1"); // 1 token minimum
+
+    await yoloFlip.connect(admin).setTokenMinBet(tokenAddr, highMinBet);
+
+    // Default bet amount (0.01) should now be too small for this token
+    await expect(
+      placeBetWithToken({ player, betMask: 1n, modulo: 2n, betAmount: defaultBetAmount }),
+    ).to.be.revertedWithCustomError(yoloFlip, "BetTooSmall");
+
+    // But ETH bets still use the global minimum
+    await expect(placeBet({ player, betMask: 1n, modulo: 2n })).to.not.be.reverted;
+
+    // Reset
+    await yoloFlip.connect(admin).setTokenMinBet(tokenAddr, 0n);
+  });
+
+  it("L1: should emit TokenMinBetChanged", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    await expect(yoloFlip.connect(admin).setTokenMinBet(tokenAddr, 100n))
+      .to.emit(yoloFlip, "TokenMinBetChanged")
+      .withArgs(tokenAddr, 100n);
+    // Reset
+    await yoloFlip.connect(admin).setTokenMinBet(tokenAddr, 0n);
+  });
+
+  it("M3: bankroll should exclude pending payouts", async function () {
+    // Get initial maxWin
+    const initialMaxWin = await yoloFlip.maxWin(ETH_TOKEN);
+
+    // Create a rejector that will cause pendingPayouts to accumulate
+    const rejectorAddress = ethers.Wallet.createRandom().address;
+    await ethers.provider.send("hardhat_setCode", [rejectorAddress, "0x60006000fd"]);
+    await ethers.provider.send("hardhat_setBalance", [rejectorAddress, "0x3635C9ADC5DEA00000"]);
+    await ethers.provider.send("hardhat_impersonateAccount", [rejectorAddress]);
+    const rejectorSigner = await ethers.getSigner(rejectorAddress);
+
+    // Find a winning bet for the rejector
+    let winningBet: { commit: bigint; reveal: bigint; blockHash: string } | null = null;
+    for (let i = 0; i < 40; i++) {
+      const reveal = generateReveal();
+      const placed = await placeBet({ player: rejectorSigner, betMask: 1n, modulo: 2n, reveal });
+      const placeBlock = await ethers.provider.getBlock(placed.receipt.blockNumber);
+      const blockHash = placeBlock!.hash!;
+      const entropy = ethers.solidityPackedKeccak256(["uint256", "bytes32"], [reveal, blockHash]);
+      const dice = BigInt(entropy) % 2n;
+      if (dice === 0n) {
+        winningBet = { commit: placed.commit, reveal, blockHash };
+        break;
+      }
+      await mine(257);
+      await yoloFlip.connect(rejectorSigner).refundBet(placed.commit);
+    }
+    expect(winningBet).to.not.equal(null);
+
+    // Settle — payout fails, goes to pendingPayouts
+    await yoloFlip.connect(croupier).settleBet(winningBet!.reveal, winningBet!.blockHash);
+
+    const pending = await yoloFlip.pendingPayouts(rejectorAddress, ETH_TOKEN);
+    expect(pending).to.be.gt(0n);
+
+    // maxWin should now be reduced by the pending amount
+    const newMaxWin = await yoloFlip.maxWin(ETH_TOKEN);
+    expect(newMaxWin).to.be.lt(initialMaxWin);
+
+    await ethers.provider.send("hardhat_stopImpersonatingAccount", [rejectorAddress]);
+  });
 });
