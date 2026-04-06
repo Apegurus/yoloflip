@@ -73,6 +73,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(CROUPIER_ROLE, croupier);
         secretSigner = _secretSigner;
+        if (_houseEdgeBP > 500) revert InvalidHouseEdge();
         houseEdgeBP = _houseEdgeBP;
         minBetAmount = _minBetAmount;
         maxProfitRatio = 500;
@@ -130,7 +131,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         if (rollUnder == 0 || rollUnder >= modulo) revert InvalidBetMask();
     }
 
-    function settleBet(uint256 reveal, bytes32 blockHash) external onlyRole(CROUPIER_ROLE) {
+    function settleBet(uint256 reveal, bytes32 blockHash) external onlyRole(CROUPIER_ROLE) nonReentrant {
         uint256 commit = uint256(keccak256(abi.encodePacked(reveal)));
         Bet storage bet = bets[commit];
 
