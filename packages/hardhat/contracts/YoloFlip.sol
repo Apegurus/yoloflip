@@ -5,7 +5,6 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant CROUPIER_ROLE = keccak256("CROUPIER_ROLE");
@@ -63,6 +62,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     error InvalidMaxProfitRatio();
     error WithdrawTooLarge();
     error ZeroAddress();
+    error TransferFailed();
 
     event BetPlaced(uint256 indexed commit, address indexed gambler, uint256 amount, uint256 betMask, uint256 modulo);
     event BetSettled(uint256 indexed commit, address indexed gambler, uint256 dice, uint256 payout);
@@ -195,7 +195,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
         pendingPayouts[msg.sender] = 0;
         (bool success, ) = msg.sender.call{value: amount}("");
-        require(success, "Transfer failed");
+        if (!success) revert TransferFailed();
     }
 
     function getWinAmount(uint256 amount, uint256 modulo, uint256 rollUnder) public view returns (uint256) {
