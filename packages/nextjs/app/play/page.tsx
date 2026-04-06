@@ -51,7 +51,7 @@ const Play: NextPage = () => {
     },
   });
 
-  const handlePlaceBet = async (betMask: bigint, modulo: bigint, betAmount: bigint) => {
+  const handlePlaceBet = async (betMask: bigint, modulo: bigint, betAmount: bigint, betOver: boolean) => {
     if (!isConnected) {
       notification.error("Please connect your wallet first");
       return;
@@ -64,7 +64,16 @@ const Play: NextPage = () => {
 
       await writeContractAsync({
         functionName: "placeBet",
-        args: [betMask, modulo, BigInt(commitLastBlock), BigInt(commit), v, r as `0x${string}`, s as `0x${string}`],
+        args: [
+          betMask,
+          modulo,
+          betOver,
+          BigInt(commitLastBlock),
+          BigInt(commit),
+          v,
+          r as `0x${string}`,
+          s as `0x${string}`,
+        ],
         value: betAmount,
       });
 

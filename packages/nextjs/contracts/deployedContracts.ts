@@ -62,6 +62,28 @@ const deployedContracts = {
           type: "error",
         },
         {
+          inputs: [
+            {
+              internalType: "address",
+              name: "target",
+              type: "address",
+            },
+          ],
+          name: "AddressEmptyCode",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "account",
+              type: "address",
+            },
+          ],
+          name: "AddressInsufficientBalance",
+          type: "error",
+        },
+        {
           inputs: [],
           name: "BetAlreadyExists",
           type: "error",
@@ -135,6 +157,11 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "FailedInnerCall",
+          type: "error",
+        },
+        {
+          inputs: [],
           name: "InsufficientFunds",
           type: "error",
         },
@@ -165,6 +192,11 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "InvalidTokenBet",
+          type: "error",
+        },
+        {
+          inputs: [],
           name: "NoPayoutPending",
           type: "error",
         },
@@ -176,6 +208,22 @@ const deployedContracts = {
         {
           inputs: [],
           name: "ReentrancyGuardReentrantCall",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "token",
+              type: "address",
+            },
+          ],
+          name: "SafeERC20FailedOperation",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "TokenNotAllowed",
           type: "error",
         },
         {
@@ -226,6 +274,18 @@ const deployedContracts = {
               name: "modulo",
               type: "uint256",
             },
+            {
+              indexed: false,
+              internalType: "address",
+              name: "token",
+              type: "address",
+            },
+            {
+              indexed: false,
+              internalType: "bool",
+              name: "isOver",
+              type: "bool",
+            },
           ],
           name: "BetPlaced",
           type: "event",
@@ -250,6 +310,12 @@ const deployedContracts = {
               internalType: "uint256",
               name: "amount",
               type: "uint256",
+            },
+            {
+              indexed: false,
+              internalType: "address",
+              name: "token",
+              type: "address",
             },
           ],
           name: "BetRefunded",
@@ -288,6 +354,12 @@ const deployedContracts = {
               name: "modulo",
               type: "uint256",
             },
+            {
+              indexed: false,
+              internalType: "address",
+              name: "token",
+              type: "address",
+            },
           ],
           name: "BetSettled",
           type: "event",
@@ -320,6 +392,12 @@ const deployedContracts = {
               name: "amount",
               type: "uint256",
             },
+            {
+              indexed: false,
+              internalType: "address",
+              name: "token",
+              type: "address",
+            },
           ],
           name: "HouseFundsWithdrawn",
           type: "event",
@@ -348,19 +426,6 @@ const deployedContracts = {
             },
           ],
           name: "MinBetChanged",
-          type: "event",
-        },
-        {
-          anonymous: false,
-          inputs: [
-            {
-              indexed: false,
-              internalType: "address",
-              name: "newSigner",
-              type: "address",
-            },
-          ],
-          name: "SecretSignerChanged",
           type: "event",
         },
         {
@@ -457,6 +522,38 @@ const deployedContracts = {
             {
               indexed: false,
               internalType: "address",
+              name: "newSigner",
+              type: "address",
+            },
+          ],
+          name: "SecretSignerChanged",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "address",
+              name: "token",
+              type: "address",
+            },
+            {
+              indexed: false,
+              internalType: "bool",
+              name: "allowed",
+              type: "bool",
+            },
+          ],
+          name: "TokenAllowed",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: false,
+              internalType: "address",
               name: "account",
               type: "address",
             },
@@ -493,6 +590,25 @@ const deployedContracts = {
         {
           inputs: [
             {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
+          ],
+          name: "allowedTokens",
+          outputs: [
+            {
+              internalType: "bool",
+              name: "",
+              type: "bool",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
               internalType: "uint256",
               name: "",
               type: "uint256",
@@ -516,6 +632,11 @@ const deployedContracts = {
               type: "uint8",
             },
             {
+              internalType: "bool",
+              name: "isOver",
+              type: "bool",
+            },
+            {
               internalType: "uint40",
               name: "placeBlockNumber",
               type: "uint40",
@@ -530,12 +651,23 @@ const deployedContracts = {
               name: "gambler",
               type: "address",
             },
+            {
+              internalType: "address",
+              name: "token",
+              type: "address",
+            },
           ],
           stateMutability: "view",
           type: "function",
         },
         {
-          inputs: [],
+          inputs: [
+            {
+              internalType: "address",
+              name: "token",
+              type: "address",
+            },
+          ],
           name: "claimPendingPayout",
           outputs: [],
           stateMutability: "nonpayable",
@@ -645,7 +777,13 @@ const deployedContracts = {
           type: "function",
         },
         {
-          inputs: [],
+          inputs: [
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
+          ],
           name: "lockedInBets",
           outputs: [
             {
@@ -671,7 +809,13 @@ const deployedContracts = {
           type: "function",
         },
         {
-          inputs: [],
+          inputs: [
+            {
+              internalType: "address",
+              name: "token",
+              type: "address",
+            },
+          ],
           name: "maxWin",
           outputs: [
             {
@@ -723,6 +867,11 @@ const deployedContracts = {
               name: "",
               type: "address",
             },
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
           ],
           name: "pendingPayouts",
           outputs: [
@@ -746,6 +895,11 @@ const deployedContracts = {
               internalType: "uint256",
               name: "modulo",
               type: "uint256",
+            },
+            {
+              internalType: "bool",
+              name: "betOver",
+              type: "bool",
             },
             {
               internalType: "uint256",
@@ -776,6 +930,64 @@ const deployedContracts = {
           name: "placeBet",
           outputs: [],
           stateMutability: "payable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "betMask",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "modulo",
+              type: "uint256",
+            },
+            {
+              internalType: "bool",
+              name: "betOver",
+              type: "bool",
+            },
+            {
+              internalType: "address",
+              name: "token",
+              type: "address",
+            },
+            {
+              internalType: "uint256",
+              name: "amount",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "commitLastBlock",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "commit",
+              type: "uint256",
+            },
+            {
+              internalType: "uint8",
+              name: "v",
+              type: "uint8",
+            },
+            {
+              internalType: "bytes32",
+              name: "r",
+              type: "bytes32",
+            },
+            {
+              internalType: "bytes32",
+              name: "s",
+              type: "bytes32",
+            },
+          ],
+          name: "placeBetWithToken",
+          outputs: [],
+          stateMutability: "nonpayable",
           type: "function",
         },
         {
@@ -838,6 +1050,24 @@ const deployedContracts = {
             },
           ],
           stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "token",
+              type: "address",
+            },
+            {
+              internalType: "bool",
+              name: "allowed",
+              type: "bool",
+            },
+          ],
+          name: "setAllowedToken",
+          outputs: [],
+          stateMutability: "nonpayable",
           type: "function",
         },
         {
@@ -947,6 +1177,11 @@ const deployedContracts = {
               internalType: "uint256",
               name: "amount",
               type: "uint256",
+            },
+            {
+              internalType: "address",
+              name: "token",
+              type: "address",
             },
           ],
           name: "withdrawHouseFunds",

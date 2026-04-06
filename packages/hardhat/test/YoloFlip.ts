@@ -3,7 +3,9 @@ import { ethers } from "hardhat";
 import { mine } from "@nomicfoundation/hardhat-network-helpers";
 import type { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import type { HDNodeWallet, Signer, TransactionReceipt, Wallet } from "ethers";
-import type { YoloFlip } from "../typechain-types";
+import type { YoloFlip, MockERC20 } from "../typechain-types";
+
+const ETH_TOKEN = ethers.ZeroAddress;
 
 function generateReveal(): bigint {
   return BigInt(ethers.hexlify(ethers.randomBytes(32)));
@@ -29,6 +31,7 @@ async function signCommit(
 
 describe("YoloFlip", function () {
   let yoloFlip: YoloFlip;
+  let mockToken: MockERC20;
   let admin: HardhatEthersSigner;
   let croupier: HardhatEthersSigner;
   let player: HardhatEthersSigner;
@@ -44,6 +47,7 @@ describe("YoloFlip", function () {
     player: Signer;
     betMask: bigint;
     modulo: bigint;
+    betOver?: boolean;
     betAmount?: bigint;
     commitLastBlock?: bigint;
     reveal?: bigint;
@@ -63,10 +67,55 @@ describe("YoloFlip", function () {
     const signerWallet = opts.signerWallet ?? secretSignerWallet;
     const { v, r, s } = await signCommit(signerWallet, commitLastBlock, commit, contractAddress);
     const betAmount = opts.betAmount ?? defaultBetAmount;
+    const betOver = opts.betOver ?? false;
 
     const tx = await yoloFlip
       .connect(opts.player)
-      .placeBet(opts.betMask, opts.modulo, commitLastBlock, commit, v, r, s, { value: betAmount });
+      .placeBet(opts.betMask, opts.modulo, betOver, commitLastBlock, commit, v, r, s, { value: betAmount });
+    const receipt = await tx.wait();
+    return { commit, reveal, tx, receipt: receipt! };
+  }
+
+  async function placeBetWithToken(opts: {
+    player: HardhatEthersSigner;
+    betMask: bigint;
+    modulo: bigint;
+    betOver?: boolean;
+    betAmount?: bigint;
+    token?: MockERC20;
+    reveal?: bigint;
+  }): Promise<{
+    commit: bigint;
+    reveal: bigint;
+    tx: Awaited<ReturnType<YoloFlip["placeBetWithToken"]>>;
+    receipt: TransactionReceipt;
+  }> {
+    const contractAddress = await yoloFlip.getAddress();
+    const block = await ethers.provider.getBlock("latest");
+    const commitLastBlock = BigInt(block!.number + 100);
+    const reveal = opts.reveal ?? generateReveal();
+    const commit = revealToCommit(reveal);
+    const { v, r, s } = await signCommit(secretSignerWallet, commitLastBlock, commit, contractAddress);
+    const betAmount = opts.betAmount ?? defaultBetAmount;
+    const betOver = opts.betOver ?? false;
+    const token = opts.token ?? mockToken;
+
+    await token.connect(opts.player).approve(contractAddress, betAmount);
+
+    const tx = await yoloFlip
+      .connect(opts.player)
+      .placeBetWithToken(
+        opts.betMask,
+        opts.modulo,
+        betOver,
+        await token.getAddress(),
+        betAmount,
+        commitLastBlock,
+        commit,
+        v,
+        r,
+        s,
+      );
     const receipt = await tx.wait();
     return { commit, reveal, tx, receipt: receipt! };
   }
@@ -94,15 +143,60 @@ describe("YoloFlip", function () {
     desiredWin: boolean,
     betMask: bigint,
     modulo: bigint,
+    betOver = false,
   ): Promise<{ commit: bigint; reveal: bigint; receipt: TransactionReceipt; dice: bigint; blockHash: string }> {
     for (let i = 0; i < 40; i++) {
       const reveal = generateReveal();
-      const placed = await placeBet({ player, betMask, modulo, reveal });
+      const placed = await placeBet({ player, betMask, modulo, reveal, betOver });
       const placeBlock = await ethers.provider.getBlock(placed.receipt.blockNumber);
       const blockHash = placeBlock!.hash!;
       const entropy = ethers.solidityPackedKeccak256(["uint256", "bytes32"], [reveal, blockHash]);
       const dice = BigInt(entropy) % modulo;
-      const win = modulo <= 40n ? ((1n << dice) & betMask) !== 0n : dice < betMask;
+
+      let win: boolean;
+      if (modulo <= 40n) {
+        win = ((1n << dice) & betMask) !== 0n;
+      } else if (betOver) {
+        // rollUnder = modulo - 1 - betMask (count of winning outcomes)
+        win = dice >= modulo - (modulo - 1n - betMask);
+      } else {
+        win = dice < betMask;
+      }
+
+      if (win === desiredWin) {
+        return { ...placed, dice, blockHash };
+      }
+
+      await mine(257);
+      await yoloFlip.connect(player).refundBet(placed.commit);
+    }
+
+    throw new Error(`Could not find ${desiredWin ? "winning" : "losing"} reveal`);
+  }
+
+  async function findOutcomeTokenBet(
+    desiredWin: boolean,
+    betMask: bigint,
+    modulo: bigint,
+    betOver = false,
+  ): Promise<{ commit: bigint; reveal: bigint; receipt: TransactionReceipt; dice: bigint; blockHash: string }> {
+    for (let i = 0; i < 40; i++) {
+      const reveal = generateReveal();
+      const placed = await placeBetWithToken({ player, betMask, modulo, reveal, betOver });
+      const placeBlock = await ethers.provider.getBlock(placed.receipt.blockNumber);
+      const blockHash = placeBlock!.hash!;
+      const entropy = ethers.solidityPackedKeccak256(["uint256", "bytes32"], [reveal, blockHash]);
+      const dice = BigInt(entropy) % modulo;
+
+      let win: boolean;
+      if (modulo <= 40n) {
+        win = ((1n << dice) & betMask) !== 0n;
+      } else if (betOver) {
+        win = dice >= modulo - (modulo - 1n - betMask);
+      } else {
+        win = dice < betMask;
+      }
+
       if (win === desiredWin) {
         return { ...placed, dice, blockHash };
       }
@@ -130,15 +224,32 @@ describe("YoloFlip", function () {
 
     await admin.sendTransaction({ to: await yoloFlip.getAddress(), value: ethers.parseEther("10") });
     await ethers.provider.send("hardhat_setBalance", [etherlessPlayer.address, "0x0"]);
+
+    // Deploy and set up mock ERC20
+    const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+    mockToken = (await MockERC20Factory.deploy("TestToken", "TT")) as MockERC20;
+    await mockToken.waitForDeployment();
+
+    // Whitelist the token
+    await yoloFlip.connect(admin).setAllowedToken(await mockToken.getAddress(), true);
+
+    // Mint tokens to player and fund the house
+    const tokenAmount = ethers.parseEther("1000");
+    await mockToken.mint(player.address, tokenAmount);
+    await mockToken.mint(await yoloFlip.getAddress(), ethers.parseEther("100")); // house bankroll
   });
 
+  // ===================== ETH BETTING TESTS =====================
+
   it("should place a coinflip bet (mod 2, heads=betMask 1)", async function () {
-    const beforeLocked = await yoloFlip.lockedInBets();
+    const beforeLocked = await yoloFlip.lockedInBets(ETH_TOKEN);
     const { commit, tx } = await placeBet({ player, betMask: 1n, modulo: 2n });
-    const afterLocked = await yoloFlip.lockedInBets();
+    const afterLocked = await yoloFlip.lockedInBets(ETH_TOKEN);
     const bet = await yoloFlip.bets(commit);
 
-    await expect(tx).to.emit(yoloFlip, "BetPlaced").withArgs(commit, player.address, defaultBetAmount, 1n, 2n);
+    await expect(tx)
+      .to.emit(yoloFlip, "BetPlaced")
+      .withArgs(commit, player.address, defaultBetAmount, 1n, 2n, ETH_TOKEN, false);
     expect(afterLocked).to.be.gt(beforeLocked);
     expect(bet.gambler).to.equal(player.address);
     expect(bet.modulo).to.equal(2n);
@@ -160,6 +271,7 @@ describe("YoloFlip", function () {
     expect(bet.rollUnder).to.equal(50n);
     expect(bet.mask).to.equal(0n);
     expect(bet.modulo).to.equal(100n);
+    expect(bet.isOver).to.equal(false);
   });
 
   it("should revert on invalid modulo (0)", async function () {
@@ -170,7 +282,7 @@ describe("YoloFlip", function () {
     const { v, r, s } = await signCommit(secretSignerWallet, commitLastBlock, commit, await yoloFlip.getAddress());
 
     await expect(
-      yoloFlip.connect(player).placeBet(1n, 0n, commitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
+      yoloFlip.connect(player).placeBet(1n, 0n, false, commitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
     ).to.be.revertedWithCustomError(yoloFlip, "InvalidModulo");
   });
 
@@ -182,7 +294,7 @@ describe("YoloFlip", function () {
     const { v, r, s } = await signCommit(secretSignerWallet, commitLastBlock, commit, await yoloFlip.getAddress());
 
     await expect(
-      yoloFlip.connect(player).placeBet(1n, 1n, commitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
+      yoloFlip.connect(player).placeBet(1n, 1n, false, commitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
     ).to.be.revertedWithCustomError(yoloFlip, "InvalidModulo");
   });
 
@@ -194,7 +306,7 @@ describe("YoloFlip", function () {
     const { v, r, s } = await signCommit(secretSignerWallet, commitLastBlock, commit, await yoloFlip.getAddress());
 
     await expect(
-      yoloFlip.connect(player).placeBet(1n, 101n, commitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
+      yoloFlip.connect(player).placeBet(1n, 101n, false, commitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
     ).to.be.revertedWithCustomError(yoloFlip, "InvalidModulo");
   });
 
@@ -221,7 +333,9 @@ describe("YoloFlip", function () {
 
   it("should accept a valid ECDSA signature", async function () {
     const { commit, tx } = await placeBet({ player, betMask: 1n, modulo: 2n });
-    await expect(tx).to.emit(yoloFlip, "BetPlaced").withArgs(commit, player.address, defaultBetAmount, 1n, 2n);
+    await expect(tx)
+      .to.emit(yoloFlip, "BetPlaced")
+      .withArgs(commit, player.address, defaultBetAmount, 1n, 2n, ETH_TOKEN, false);
   });
 
   it("should revert on invalid signature (wrong signer)", async function () {
@@ -245,9 +359,11 @@ describe("YoloFlip", function () {
     const commitLastBlock = BigInt(block!.number + 100);
     const { v, r, s } = await signCommit(secretSignerWallet, commitLastBlock, commit, await yoloFlip.getAddress());
 
-    await yoloFlip.connect(player).placeBet(1n, 2n, commitLastBlock, commit, v, r, s, { value: defaultBetAmount });
+    await yoloFlip
+      .connect(player)
+      .placeBet(1n, 2n, false, commitLastBlock, commit, v, r, s, { value: defaultBetAmount });
     await expect(
-      yoloFlip.connect(player).placeBet(1n, 2n, commitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
+      yoloFlip.connect(player).placeBet(1n, 2n, false, commitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
     ).to.be.revertedWithCustomError(yoloFlip, "BetAlreadyExists");
   });
 
@@ -261,7 +377,7 @@ describe("YoloFlip", function () {
 
     await expect(tx)
       .to.emit(yoloFlip, "BetSettled")
-      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 2n);
+      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 2n, ETH_TOKEN);
 
     expect(receipt).to.not.equal(null);
     expect(afterBalance - beforeBalance).to.equal(expectedPayout);
@@ -273,7 +389,9 @@ describe("YoloFlip", function () {
     const tx = await yoloFlip.connect(croupier).settleBet(losing.reveal, losing.blockHash);
     const afterBalance = await ethers.provider.getBalance(player.address);
 
-    await expect(tx).to.emit(yoloFlip, "BetSettled").withArgs(losing.commit, player.address, losing.dice, 0n, 2n);
+    await expect(tx)
+      .to.emit(yoloFlip, "BetSettled")
+      .withArgs(losing.commit, player.address, losing.dice, 0n, 2n, ETH_TOKEN);
     expect(afterBalance - beforeBalance).to.equal(0n);
   });
 
@@ -284,19 +402,19 @@ describe("YoloFlip", function () {
 
     await expect(yoloFlip.connect(croupier).settleBet(winning.reveal, winning.blockHash))
       .to.emit(yoloFlip, "BetSettled")
-      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 6n);
+      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 6n, ETH_TOKEN);
   });
 
   it("should track lockedInBets correctly (increase on place, decrease on settle)", async function () {
-    const before = await yoloFlip.lockedInBets();
+    const before = await yoloFlip.lockedInBets(ETH_TOKEN);
     const { reveal, receipt } = await placeBet({ player, betMask: 1n, modulo: 2n });
-    const afterPlace = await yoloFlip.lockedInBets();
+    const afterPlace = await yoloFlip.lockedInBets(ETH_TOKEN);
     const possibleWin = await yoloFlip.getWinAmount(defaultBetAmount, 2n, 1n);
 
     expect(afterPlace - before).to.equal(possibleWin);
 
     await settleBet(reveal, receipt.blockNumber);
-    const afterSettle = await yoloFlip.lockedInBets();
+    const afterSettle = await yoloFlip.lockedInBets(ETH_TOKEN);
     expect(afterSettle).to.equal(before);
   });
 
@@ -310,7 +428,7 @@ describe("YoloFlip", function () {
     const gasCost = receipt!.gasUsed * receipt!.gasPrice;
     const afterBalance = await ethers.provider.getBalance(player.address);
 
-    await expect(tx).to.emit(yoloFlip, "BetRefunded").withArgs(commit, player.address, defaultBetAmount);
+    await expect(tx).to.emit(yoloFlip, "BetRefunded").withArgs(commit, player.address, defaultBetAmount, ETH_TOKEN);
     expect(afterBalance - beforeBalance + gasCost).to.equal(defaultBetAmount);
   });
 
@@ -336,7 +454,7 @@ describe("YoloFlip", function () {
     await mine(257);
     await expect(yoloFlip.connect(badActor).refundBet(refundable.commit))
       .to.emit(yoloFlip, "BetRefunded")
-      .withArgs(refundable.commit, badActor.address, defaultBetAmount);
+      .withArgs(refundable.commit, badActor.address, defaultBetAmount, ETH_TOKEN);
   });
 
   it("should credit pendingPayouts if payout fails", async function () {
@@ -369,17 +487,17 @@ describe("YoloFlip", function () {
 
     const expectedWinPayout = await yoloFlip.getWinAmount(defaultBetAmount, 2n, 1n);
     const expectedPending = expectedWinPayout + refundedLosingBets * defaultBetAmount;
-    expect(await yoloFlip.pendingPayouts(rejectorAddress)).to.equal(expectedPending);
+    expect(await yoloFlip.pendingPayouts(rejectorAddress, ETH_TOKEN)).to.equal(expectedPending);
 
     await ethers.provider.send("hardhat_setCode", [rejectorAddress, "0x"]);
     const before = await ethers.provider.getBalance(rejectorAddress);
-    const claimTx = await yoloFlip.connect(rejectorSigner).claimPendingPayout();
+    const claimTx = await yoloFlip.connect(rejectorSigner).claimPendingPayout(ETH_TOKEN);
     const claimReceipt = await claimTx.wait();
     const gasCost = claimReceipt!.gasUsed * claimReceipt!.gasPrice;
     const after = await ethers.provider.getBalance(rejectorAddress);
 
     expect(after - before + gasCost).to.equal(expectedPending);
-    expect(await yoloFlip.pendingPayouts(rejectorAddress)).to.equal(0n);
+    expect(await yoloFlip.pendingPayouts(rejectorAddress, ETH_TOKEN)).to.equal(0n);
     await ethers.provider.send("hardhat_stopImpersonatingAccount", [rejectorAddress]);
   });
 
@@ -387,15 +505,15 @@ describe("YoloFlip", function () {
     await placeBet({ player, betMask: 1n, modulo: 2n });
 
     const balance = await ethers.provider.getBalance(await yoloFlip.getAddress());
-    const locked = await yoloFlip.lockedInBets();
+    const locked = await yoloFlip.lockedInBets(ETH_TOKEN);
     const available = balance - locked;
 
     await expect(
-      yoloFlip.connect(admin).withdrawHouseFunds(admin.address, available + 1n),
+      yoloFlip.connect(admin).withdrawHouseFunds(admin.address, available + 1n, ETH_TOKEN),
     ).to.be.revertedWithCustomError(yoloFlip, "WithdrawTooLarge");
 
     const before = await ethers.provider.getBalance(admin.address);
-    const tx = await yoloFlip.connect(admin).withdrawHouseFunds(admin.address, available);
+    const tx = await yoloFlip.connect(admin).withdrawHouseFunds(admin.address, available, ETH_TOKEN);
     const receipt = await tx.wait();
     const gasCost = receipt!.gasUsed * receipt!.gasPrice;
     const after = await ethers.provider.getBalance(admin.address);
@@ -415,7 +533,7 @@ describe("YoloFlip", function () {
   });
 
   it("should revert claimPendingPayout when nothing is owed", async function () {
-    await expect(yoloFlip.connect(player).claimPendingPayout()).to.be.revertedWithCustomError(
+    await expect(yoloFlip.connect(player).claimPendingPayout(ETH_TOKEN)).to.be.revertedWithCustomError(
       yoloFlip,
       "NoPayoutPending",
     );
@@ -459,9 +577,9 @@ describe("YoloFlip", function () {
 
   it("should emit HouseFundsWithdrawn when withdrawing", async function () {
     const withdrawAmount = ethers.parseEther("1");
-    await expect(yoloFlip.connect(admin).withdrawHouseFunds(admin.address, withdrawAmount))
+    await expect(yoloFlip.connect(admin).withdrawHouseFunds(admin.address, withdrawAmount, ETH_TOKEN))
       .to.emit(yoloFlip, "HouseFundsWithdrawn")
-      .withArgs(admin.address, withdrawAmount);
+      .withArgs(admin.address, withdrawAmount, ETH_TOKEN);
   });
 
   it("should include modulo in BetSettled event", async function () {
@@ -471,6 +589,233 @@ describe("YoloFlip", function () {
 
     await expect(tx)
       .to.emit(yoloFlip, "BetSettled")
-      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 2n);
+      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 2n, ETH_TOKEN);
+  });
+
+  // ===================== ROLL OVER TESTS =====================
+
+  it("should place a roll-over bet (mod 100, over 50)", async function () {
+    const { commit } = await placeBet({ player, betMask: 50n, modulo: 100n, betOver: true });
+    const bet = await yoloFlip.bets(commit);
+
+    // rollUnder stores winning outcome count: 100 - 1 - 50 = 49
+    expect(bet.rollUnder).to.equal(49n);
+    expect(bet.isOver).to.equal(true);
+    expect(bet.modulo).to.equal(100n);
+  });
+
+  it("should settle a roll-over win correctly", async function () {
+    // betMask=50, betOver=true → win if dice > 50 (dice ∈ {51..99}, 49 outcomes)
+    const winning = await findOutcomeBet(true, 50n, 100n, true);
+    const rollUnder = 49n; // 100 - 1 - 50
+    const expectedPayout = await yoloFlip.getWinAmount(defaultBetAmount, 100n, rollUnder);
+
+    const tx = await yoloFlip.connect(croupier).settleBet(winning.reveal, winning.blockHash);
+    await expect(tx)
+      .to.emit(yoloFlip, "BetSettled")
+      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 100n, ETH_TOKEN);
+
+    // Verify the dice was actually > 50
+    expect(winning.dice).to.be.gt(50n);
+  });
+
+  it("should settle a roll-over loss correctly", async function () {
+    const losing = await findOutcomeBet(false, 50n, 100n, true);
+    const tx = await yoloFlip.connect(croupier).settleBet(losing.reveal, losing.blockHash);
+
+    await expect(tx)
+      .to.emit(yoloFlip, "BetSettled")
+      .withArgs(losing.commit, player.address, losing.dice, 0n, 100n, ETH_TOKEN);
+
+    // Verify the dice was <= 50
+    expect(losing.dice).to.be.lte(50n);
+  });
+
+  it("should revert roll-over with betMask >= modulo - 1", async function () {
+    // betMask=99 with betOver on mod 100 → over 99 = 0 winning outcomes
+    await expect(placeBet({ player, betMask: 99n, modulo: 100n, betOver: true })).to.be.revertedWithCustomError(
+      yoloFlip,
+      "InvalidBetMask",
+    );
+  });
+
+  it("should ignore betOver for bitmask modulo (mod <= 40)", async function () {
+    // betOver is stored as false for modulo <= 40
+    const { commit } = await placeBet({ player, betMask: 1n, modulo: 2n, betOver: true });
+    const bet = await yoloFlip.bets(commit);
+    expect(bet.isOver).to.equal(false);
+  });
+
+  // ===================== ERC20 TOKEN BETTING TESTS =====================
+
+  it("should place an ERC20 token bet", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    const { commit, tx } = await placeBetWithToken({ player, betMask: 1n, modulo: 2n });
+
+    await expect(tx)
+      .to.emit(yoloFlip, "BetPlaced")
+      .withArgs(commit, player.address, defaultBetAmount, 1n, 2n, tokenAddr, false);
+
+    const bet = await yoloFlip.bets(commit);
+    expect(bet.token).to.equal(tokenAddr);
+    expect(bet.amount).to.equal(defaultBetAmount);
+    expect(bet.gambler).to.equal(player.address);
+  });
+
+  it("should track lockedInBets per token", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    const beforeETH = await yoloFlip.lockedInBets(ETH_TOKEN);
+    const beforeToken = await yoloFlip.lockedInBets(tokenAddr);
+
+    await placeBet({ player, betMask: 1n, modulo: 2n });
+    await placeBetWithToken({ player, betMask: 1n, modulo: 2n });
+
+    const afterETH = await yoloFlip.lockedInBets(ETH_TOKEN);
+    const afterToken = await yoloFlip.lockedInBets(tokenAddr);
+
+    expect(afterETH).to.be.gt(beforeETH);
+    expect(afterToken).to.be.gt(beforeToken);
+  });
+
+  it("should settle an ERC20 token win and transfer tokens", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    const winning = await findOutcomeTokenBet(true, 1n, 2n);
+
+    const beforeBalance = await mockToken.balanceOf(player.address);
+    const tx = await yoloFlip.connect(croupier).settleBet(winning.reveal, winning.blockHash);
+    const afterBalance = await mockToken.balanceOf(player.address);
+    const expectedPayout = await yoloFlip.getWinAmount(defaultBetAmount, 2n, 1n);
+
+    await expect(tx)
+      .to.emit(yoloFlip, "BetSettled")
+      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 2n, tokenAddr);
+
+    expect(afterBalance - beforeBalance).to.equal(expectedPayout);
+  });
+
+  it("should settle an ERC20 token loss with zero payout", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    const losing = await findOutcomeTokenBet(false, 1n, 2n);
+
+    const beforeBalance = await mockToken.balanceOf(player.address);
+    const tx = await yoloFlip.connect(croupier).settleBet(losing.reveal, losing.blockHash);
+    const afterBalance = await mockToken.balanceOf(player.address);
+
+    await expect(tx)
+      .to.emit(yoloFlip, "BetSettled")
+      .withArgs(losing.commit, player.address, losing.dice, 0n, 2n, tokenAddr);
+
+    expect(afterBalance - beforeBalance).to.equal(0n);
+  });
+
+  it("should refund an ERC20 token bet after expiration", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    const { commit } = await placeBetWithToken({ player, betMask: 1n, modulo: 2n });
+    await mine(257);
+
+    const beforeBalance = await mockToken.balanceOf(player.address);
+    const tx = await yoloFlip.connect(player).refundBet(commit);
+    const afterBalance = await mockToken.balanceOf(player.address);
+
+    await expect(tx).to.emit(yoloFlip, "BetRefunded").withArgs(commit, player.address, defaultBetAmount, tokenAddr);
+
+    expect(afterBalance - beforeBalance).to.equal(defaultBetAmount);
+  });
+
+  it("should revert placeBetWithToken for non-whitelisted token", async function () {
+    const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+    const badToken = (await MockERC20Factory.deploy("Bad", "BAD")) as MockERC20;
+    await badToken.mint(player.address, ethers.parseEther("100"));
+
+    const contractAddress = await yoloFlip.getAddress();
+    const block = await ethers.provider.getBlock("latest");
+    const commitLastBlock = BigInt(block!.number + 100);
+    const reveal = generateReveal();
+    const commit = revealToCommit(reveal);
+    const { v, r, s } = await signCommit(secretSignerWallet, commitLastBlock, commit, contractAddress);
+
+    await badToken.connect(player).approve(contractAddress, defaultBetAmount);
+
+    await expect(
+      yoloFlip
+        .connect(player)
+        .placeBetWithToken(
+          1n,
+          2n,
+          false,
+          await badToken.getAddress(),
+          defaultBetAmount,
+          commitLastBlock,
+          commit,
+          v,
+          r,
+          s,
+        ),
+    ).to.be.revertedWithCustomError(yoloFlip, "TokenNotAllowed");
+  });
+
+  it("should revert placeBetWithToken with ETH address", async function () {
+    const contractAddress = await yoloFlip.getAddress();
+    const block = await ethers.provider.getBlock("latest");
+    const commitLastBlock = BigInt(block!.number + 100);
+    const reveal = generateReveal();
+    const commit = revealToCommit(reveal);
+    const { v, r, s } = await signCommit(secretSignerWallet, commitLastBlock, commit, contractAddress);
+
+    await expect(
+      yoloFlip
+        .connect(player)
+        .placeBetWithToken(1n, 2n, false, ETH_TOKEN, defaultBetAmount, commitLastBlock, commit, v, r, s),
+    ).to.be.revertedWithCustomError(yoloFlip, "InvalidTokenBet");
+  });
+
+  it("should withdraw ERC20 house funds", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    const houseBankroll = await mockToken.balanceOf(await yoloFlip.getAddress());
+
+    const beforeBalance = await mockToken.balanceOf(admin.address);
+    await yoloFlip.connect(admin).withdrawHouseFunds(admin.address, houseBankroll, tokenAddr);
+    const afterBalance = await mockToken.balanceOf(admin.address);
+
+    expect(afterBalance - beforeBalance).to.equal(houseBankroll);
+  });
+
+  it("should emit TokenAllowed when whitelisting", async function () {
+    const newToken = ethers.Wallet.createRandom().address;
+    await expect(yoloFlip.connect(admin).setAllowedToken(newToken, true))
+      .to.emit(yoloFlip, "TokenAllowed")
+      .withArgs(newToken, true);
+    expect(await yoloFlip.allowedTokens(newToken)).to.equal(true);
+
+    await expect(yoloFlip.connect(admin).setAllowedToken(newToken, false))
+      .to.emit(yoloFlip, "TokenAllowed")
+      .withArgs(newToken, false);
+    expect(await yoloFlip.allowedTokens(newToken)).to.equal(false);
+  });
+
+  it("should revert setAllowedToken for ETH address", async function () {
+    await expect(yoloFlip.connect(admin).setAllowedToken(ETH_TOKEN, true)).to.be.revertedWithCustomError(
+      yoloFlip,
+      "InvalidTokenBet",
+    );
+  });
+
+  it("should support ERC20 roll-over bet", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    const { commit } = await placeBetWithToken({ player, betMask: 50n, modulo: 100n, betOver: true });
+    const bet = await yoloFlip.bets(commit);
+
+    expect(bet.isOver).to.equal(true);
+    expect(bet.rollUnder).to.equal(49n);
+    expect(bet.token).to.equal(tokenAddr);
+  });
+
+  it("should report maxWin per token", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    const ethMaxWin = await yoloFlip.maxWin(ETH_TOKEN);
+    const tokenMaxWin = await yoloFlip.maxWin(tokenAddr);
+
+    expect(ethMaxWin).to.be.gt(0n);
+    expect(tokenMaxWin).to.be.gt(0n);
   });
 });

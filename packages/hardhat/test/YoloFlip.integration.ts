@@ -67,7 +67,7 @@ describe("YoloFlip Integration", function () {
     const betAmount = ethers.parseEther("0.01");
     const betTx = await yoloFlip
       .connect(player)
-      .placeBet(1n, 2n, commitLastBlock, commit, v, r, s, { value: betAmount });
+      .placeBet(1n, 2n, false, commitLastBlock, commit, v, r, s, { value: betAmount });
     const betReceipt = await betTx.wait();
     expect(betReceipt).to.not.equal(null);
 
@@ -90,7 +90,7 @@ describe("YoloFlip Integration", function () {
     expect(betSettledEvents).to.have.length(1, "BetSettled event should be emitted");
     expect(betSettledEvents[0].args.gambler).to.equal(player.address);
 
-    const lockedAfter = await yoloFlip.lockedInBets();
+    const lockedAfter = await yoloFlip.lockedInBets(ethers.ZeroAddress);
     expect(lockedAfter).to.equal(0n, "lockedInBets should be 0 after settlement");
 
     const bet = await yoloFlip.bets(commit);
@@ -117,7 +117,7 @@ describe("YoloFlip Integration", function () {
     const betAmount = ethers.parseEther("0.01");
     const betTx = await yoloFlip
       .connect(player)
-      .placeBet(betMask, modulo, commitLastBlock, commit, v, r, s, { value: betAmount });
+      .placeBet(betMask, modulo, false, commitLastBlock, commit, v, r, s, { value: betAmount });
     const betReceipt = await betTx.wait();
 
     await mine(1);
@@ -158,12 +158,12 @@ describe("YoloFlip Integration", function () {
     const { v, r, s } = await signCommit(secretSignerWallet, commitLastBlock, commit, contractAddress);
 
     const betAmount = ethers.parseEther("0.05");
-    const betTx = await yoloFlip.connect(player).placeBet(1n, 2n, commitLastBlock, commit, v, r, s, {
+    const betTx = await yoloFlip.connect(player).placeBet(1n, 2n, false, commitLastBlock, commit, v, r, s, {
       value: betAmount,
     });
     await betTx.wait();
 
-    const lockedBefore = await yoloFlip.lockedInBets();
+    const lockedBefore = await yoloFlip.lockedInBets(ethers.ZeroAddress);
     expect(lockedBefore).to.be.gt(0n, "lockedInBets should be > 0 after placing bet");
 
     await mine(257);
@@ -184,7 +184,7 @@ describe("YoloFlip Integration", function () {
     const netReceived = playerBalanceAfter - playerBalanceBefore + gasCost;
     expect(netReceived).to.equal(betAmount, "Player should receive full bet amount back");
 
-    const lockedAfter = await yoloFlip.lockedInBets();
+    const lockedAfter = await yoloFlip.lockedInBets(ethers.ZeroAddress);
     expect(lockedAfter).to.equal(0n, "lockedInBets should be 0 after refund");
 
     console.log(`[Integration] Timeout refund succeeded. Player received ${ethers.formatEther(betAmount)} ETH back.`);

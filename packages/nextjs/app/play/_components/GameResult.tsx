@@ -1,6 +1,7 @@
 "use client";
 
 import type { BetResult } from "../types";
+import { getNumberColor } from "./rouletteBets";
 import { formatEther } from "viem";
 
 type GameResultProps = {
@@ -28,6 +29,49 @@ export const GameResult = ({ lastResult }: GameResultProps) => {
   const { dice, payout, modulo } = lastResult;
   const won = payout > 0n;
   const isCoinflip = modulo === 2n;
+  const isDice = modulo === 6n;
+  const isRoulette = modulo === 37n;
+
+  const renderResult = () => {
+    if (isCoinflip) {
+      return (
+        <>
+          <div className="text-6xl my-2">{dice === 0n ? "🪙 Heads" : "🪙 Tails"}</div>
+          <p className="text-lg">Rolled: {dice === 0n ? "Heads" : "Tails"}</p>
+        </>
+      );
+    }
+    if (isDice) {
+      return (
+        <>
+          <div className="text-6xl my-2">{getDiceEmoji(dice)}</div>
+          <p className="text-lg">Rolled: {Number(dice) + 1}</p>
+        </>
+      );
+    }
+    if (isRoulette) {
+      const num = Number(dice);
+      const color = getNumberColor(num);
+      const colorEmoji = color === "red" ? "🔴" : color === "black" ? "⚫" : "🟢";
+      return (
+        <>
+          <div className="text-6xl my-2">
+            {colorEmoji} {num}
+          </div>
+          <p className="text-lg capitalize">
+            Rolled: {num} ({color})
+          </p>
+        </>
+      );
+    }
+    // Range (d100)
+    return (
+      <>
+        <div className="text-6xl my-2">{Number(dice)}</div>
+        <p className="text-lg">Rolled: {Number(dice)} / 100</p>
+      </>
+    );
+  };
 
   return (
     <div
@@ -35,10 +79,7 @@ export const GameResult = ({ lastResult }: GameResultProps) => {
     >
       <div className="card-body text-center">
         <h2 className="card-title justify-center text-2xl">{won ? "🎉 You Won!" : "😢 You Lost"}</h2>
-        <div className="text-6xl my-2">{isCoinflip ? (dice === 0n ? "🪙 Heads" : "🪙 Tails") : getDiceEmoji(dice)}</div>
-        <p className="text-lg">
-          {isCoinflip ? `Rolled: ${dice === 0n ? "Heads" : "Tails"}` : `Rolled: ${Number(dice) + 1}`}
-        </p>
+        {renderResult()}
         {won && <p className="font-bold text-xl">Payout: {formatEther(payout)} ETH</p>}
       </div>
     </div>

@@ -1,4 +1,4 @@
-export type GameType = "coinflip" | "dice";
+export type GameType = "coinflip" | "dice" | "roulette" | "range";
 
 export type BetResult = {
   commit: bigint;

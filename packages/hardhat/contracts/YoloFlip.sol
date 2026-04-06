@@ -5,8 +5,12 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     bytes32 public constant CROUPIER_ROLE = keccak256("CROUPIER_ROLE");
 
     uint256 private constant MAX_MODULO = 100;
@@ -19,13 +23,18 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     uint256 private constant POPCNT_MASK = 0x0001041041041041041041041041041041041041041041041041041041041041;
     uint256 private constant POPCNT_MODULO = 0x3F;
 
+    /// @dev address(0) represents native ETH
+    address private constant ETH_TOKEN = address(0);
+
     struct Bet {
         uint128 amount;
         uint8 modulo;
         uint8 rollUnder;
+        bool isOver;
         uint40 placeBlockNumber;
         uint40 mask;
         address gambler;
+        address token;
     }
 
     // Configurable parameters
@@ -36,14 +45,17 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     // Signer for ECDSA commit verification
     address public secretSigner;
 
-    // Total of all potential payouts outstanding
-    uint128 public lockedInBets;
+    // Total of all potential payouts outstanding, per token
+    mapping(address => uint128) public lockedInBets;
 
     // Bet structs keyed by commit hash
     mapping(uint256 => Bet) public bets;
 
-    // Pull-fallback for failed ETH sends
-    mapping(address => uint256) public pendingPayouts;
+    // Pull-fallback for failed sends (gambler => token => amount)
+    mapping(address => mapping(address => uint256)) public pendingPayouts;
+
+    // Token whitelist (ETH is always allowed)
+    mapping(address => bool) public allowedTokens;
 
     error BetAlreadyExists();
     error BetDoesNotExist();
@@ -63,15 +75,18 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     error WithdrawTooLarge();
     error ZeroAddress();
     error TransferFailed();
+    error TokenNotAllowed();
+    error InvalidTokenBet();
 
-    event BetPlaced(uint256 indexed commit, address indexed gambler, uint256 amount, uint256 betMask, uint256 modulo);
-    event BetSettled(uint256 indexed commit, address indexed gambler, uint256 dice, uint256 payout, uint256 modulo);
-    event BetRefunded(uint256 indexed commit, address indexed gambler, uint256 amount);
+    event BetPlaced(uint256 indexed commit, address indexed gambler, uint256 amount, uint256 betMask, uint256 modulo, address token, bool isOver);
+    event BetSettled(uint256 indexed commit, address indexed gambler, uint256 dice, uint256 payout, uint256 modulo, address token);
+    event BetRefunded(uint256 indexed commit, address indexed gambler, uint256 amount, address token);
     event HouseEdgeChanged(uint256 newEdge);
     event SecretSignerChanged(address newSigner);
     event MinBetChanged(uint256 newMinBet);
     event MaxProfitRatioChanged(uint256 newMaxProfitRatio);
-    event HouseFundsWithdrawn(address indexed recipient, uint256 amount);
+    event HouseFundsWithdrawn(address indexed recipient, uint256 amount, address token);
+    event TokenAllowed(address indexed token, bool allowed);
 
     constructor(address admin, address croupier, address _secretSigner, uint256 _houseEdgeBP, uint256 _minBetAmount) {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -83,47 +98,111 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         maxProfitRatio = 500;
     }
 
+    /// @notice Place a bet using native ETH
     function placeBet(
         uint256 betMask,
         uint256 modulo,
+        bool betOver,
         uint256 commitLastBlock,
         uint256 commit,
         uint8 v,
         bytes32 r,
         bytes32 s
     ) external payable whenNotPaused {
-        if (modulo < 2 || modulo > MAX_MODULO) revert InvalidModulo();
-        if (block.number > commitLastBlock) revert CommitExpired();
-        if (bets[commit].gambler != address(0)) revert BetAlreadyExists();
+        _placeBet(PlaceBetParams({
+            betMask: betMask,
+            modulo: modulo,
+            betOver: betOver,
+            token: ETH_TOKEN,
+            amount: uint128(msg.value),
+            commitLastBlock: commitLastBlock,
+            commit: commit,
+            v: v,
+            r: r,
+            s: s
+        }));
+    }
 
-        bytes32 msgHash = keccak256(abi.encodePacked(uint40(commitLastBlock), commit, address(this)));
-        if (ECDSA.recover(msgHash, v, r, s) != secretSigner) revert InvalidSignature();
+    /// @notice Place a bet using an ERC20 token (must approve first)
+    function placeBetWithToken(
+        uint256 betMask,
+        uint256 modulo,
+        bool betOver,
+        address token,
+        uint256 amount,
+        uint256 commitLastBlock,
+        uint256 commit,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external whenNotPaused {
+        if (token == ETH_TOKEN) revert InvalidTokenBet();
+        if (!allowedTokens[token]) revert TokenNotAllowed();
 
-        if (msg.value < minBetAmount) revert BetTooSmall();
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 
-        uint256 rollUnder = _computeRollUnder(betMask, modulo);
+        _placeBet(PlaceBetParams({
+            betMask: betMask,
+            modulo: modulo,
+            betOver: betOver,
+            token: token,
+            amount: uint128(amount),
+            commitLastBlock: commitLastBlock,
+            commit: commit,
+            v: v,
+            r: r,
+            s: s
+        }));
+    }
 
-        uint256 possibleWinAmount = getWinAmount(msg.value, modulo, rollUnder);
-        if (possibleWinAmount - msg.value > ((address(this).balance - lockedInBets) * maxProfitRatio) / 10000) {
+    struct PlaceBetParams {
+        uint256 betMask;
+        uint256 modulo;
+        bool betOver;
+        address token;
+        uint128 amount;
+        uint256 commitLastBlock;
+        uint256 commit;
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+    }
+
+    function _placeBet(PlaceBetParams memory p) internal {
+        if (p.modulo < 2 || p.modulo > MAX_MODULO) revert InvalidModulo();
+        if (block.number > p.commitLastBlock) revert CommitExpired();
+        if (bets[p.commit].gambler != address(0)) revert BetAlreadyExists();
+        if (p.amount < minBetAmount) revert BetTooSmall();
+
+        bytes32 msgHash = keccak256(abi.encodePacked(uint40(p.commitLastBlock), p.commit, address(this)));
+        if (ECDSA.recover(msgHash, p.v, p.r, p.s) != secretSigner) revert InvalidSignature();
+
+        uint256 rollUnder = _computeRollUnder(p.betMask, p.modulo, p.betOver);
+
+        uint256 possibleWinAmount = getWinAmount(p.amount, p.modulo, rollUnder);
+        uint256 availableBankroll = _bankroll(p.token) - lockedInBets[p.token];
+        if (possibleWinAmount - p.amount > (availableBankroll * maxProfitRatio) / 10000) {
             revert ProfitExceedsMax();
         }
 
-        lockedInBets += uint128(possibleWinAmount);
-        if (lockedInBets > address(this).balance) revert InsufficientFunds();
+        lockedInBets[p.token] += uint128(possibleWinAmount);
+        if (lockedInBets[p.token] > _bankroll(p.token)) revert InsufficientFunds();
 
-        bets[commit] = Bet({
-            amount: uint128(msg.value),
-            modulo: uint8(modulo),
+        bets[p.commit] = Bet({
+            amount: p.amount,
+            modulo: uint8(p.modulo),
             rollUnder: uint8(rollUnder),
+            isOver: p.modulo > MAX_MASK_MODULO && p.betOver,
             placeBlockNumber: uint40(block.number),
-            mask: modulo <= MAX_MASK_MODULO ? uint40(betMask) : 0,
-            gambler: msg.sender
+            mask: p.modulo <= MAX_MASK_MODULO ? uint40(p.betMask) : 0,
+            gambler: msg.sender,
+            token: p.token
         });
 
-        emit BetPlaced(commit, msg.sender, msg.value, betMask, modulo);
+        emit BetPlaced(p.commit, msg.sender, p.amount, p.betMask, p.modulo, p.token, p.betOver);
     }
 
-    function _computeRollUnder(uint256 betMask, uint256 modulo) private pure returns (uint256 rollUnder) {
+    function _computeRollUnder(uint256 betMask, uint256 modulo, bool betOver) private pure returns (uint256 rollUnder) {
         if (modulo <= MAX_MASK_MODULO) {
             if (betMask == 0 || betMask >= MAX_BET_MASK) revert InvalidBetMask();
             rollUnder = ((betMask * POPCNT_MULT & POPCNT_MASK) % POPCNT_MODULO);
@@ -131,7 +210,13 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
             return rollUnder;
         }
 
-        rollUnder = betMask;
+        if (betOver) {
+            // Win if dice > betMask. Winning outcomes = modulo - 1 - betMask.
+            if (betMask >= modulo - 1) revert InvalidBetMask();
+            rollUnder = modulo - 1 - betMask;
+        } else {
+            rollUnder = betMask;
+        }
         if (rollUnder == 0 || rollUnder >= modulo) revert InvalidBetMask();
     }
 
@@ -150,7 +235,11 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         if (bet.modulo <= MAX_MASK_MODULO) {
             win = ((uint256(1) << dice) & bet.mask) != 0;
         } else {
-            win = dice < bet.rollUnder;
+            if (bet.isOver) {
+                win = dice >= (bet.modulo - bet.rollUnder);
+            } else {
+                win = dice < bet.rollUnder;
+            }
         }
 
         uint256 payout = 0;
@@ -161,17 +250,15 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         uint128 amount = bet.amount;
         uint8 betModulo = bet.modulo;
         address gambler = bet.gambler;
+        address token = bet.token;
         uint256 possibleWinAmount = getWinAmount(amount, betModulo, bet.rollUnder);
-        lockedInBets -= uint128(possibleWinAmount);
+        lockedInBets[token] -= uint128(possibleWinAmount);
         delete bets[commit];
 
-        emit BetSettled(commit, gambler, dice, win ? payout : 0, betModulo);
+        emit BetSettled(commit, gambler, dice, win ? payout : 0, betModulo, token);
 
         if (win && payout > 0) {
-            (bool success, ) = gambler.call{value: payout}("");
-            if (!success) {
-                pendingPayouts[gambler] += payout;
-            }
+            _sendFunds(gambler, payout, token);
         }
     }
 
@@ -183,34 +270,45 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
         uint128 amount = bet.amount;
         address gambler = bet.gambler;
+        address token = bet.token;
 
-        lockedInBets -= uint128(getWinAmount(bet.amount, bet.modulo, bet.rollUnder));
+        lockedInBets[token] -= uint128(getWinAmount(bet.amount, bet.modulo, bet.rollUnder));
         delete bets[commit];
 
-        emit BetRefunded(commit, gambler, amount);
+        emit BetRefunded(commit, gambler, amount, token);
 
-        (bool success, ) = gambler.call{value: amount}("");
-        if (!success) {
-            pendingPayouts[gambler] += amount;
-        }
+        _sendFunds(gambler, amount, token);
     }
 
-    function claimPendingPayout() external nonReentrant {
-        uint256 amount = pendingPayouts[msg.sender];
+    function claimPendingPayout(address token) external nonReentrant {
+        uint256 amount = pendingPayouts[msg.sender][token];
         if (amount == 0) revert NoPayoutPending();
 
-        pendingPayouts[msg.sender] = 0;
-        (bool success, ) = msg.sender.call{value: amount}("");
-        if (!success) revert TransferFailed();
+        pendingPayouts[msg.sender][token] = 0;
+        if (token == ETH_TOKEN) {
+            (bool success, ) = msg.sender.call{value: amount}("");
+            if (!success) revert TransferFailed();
+        } else {
+            IERC20(token).safeTransfer(msg.sender, amount);
+        }
     }
 
     function getWinAmount(uint256 amount, uint256 modulo, uint256 rollUnder) public view returns (uint256) {
         return (amount * (10000 - houseEdgeBP) * modulo) / rollUnder / 10000;
     }
 
-    function maxWin() public view returns (uint256) {
-        if (address(this).balance <= lockedInBets) return 0;
-        return ((address(this).balance - lockedInBets) * maxProfitRatio) / 10000;
+    function maxWin(address token) public view returns (uint256) {
+        uint256 bankroll = _bankroll(token);
+        if (bankroll <= lockedInBets[token]) return 0;
+        return ((bankroll - lockedInBets[token]) * maxProfitRatio) / 10000;
+    }
+
+    // --- Admin functions ---
+
+    function setAllowedToken(address token, bool allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (token == ETH_TOKEN) revert InvalidTokenBet();
+        allowedTokens[token] = allowed;
+        emit TokenAllowed(token, allowed);
     }
 
     function setSecretSigner(address _secretSigner) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -237,13 +335,17 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         emit MaxProfitRatioChanged(_maxProfitRatio);
     }
 
-    function withdrawHouseFunds(address payable recipient, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    function withdrawHouseFunds(address payable recipient, uint256 amount, address token) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         if (recipient == address(0)) revert ZeroAddress();
-        uint256 available = address(this).balance - lockedInBets;
+        uint256 available = _bankroll(token) - lockedInBets[token];
         if (amount > available) revert WithdrawTooLarge();
-        emit HouseFundsWithdrawn(recipient, amount);
-        (bool success, ) = recipient.call{value: amount}("");
-        if (!success) revert TransferFailed();
+        emit HouseFundsWithdrawn(recipient, amount, token);
+        if (token == ETH_TOKEN) {
+            (bool success, ) = recipient.call{value: amount}("");
+            if (!success) revert TransferFailed();
+        } else {
+            IERC20(token).safeTransfer(recipient, amount);
+        }
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -252,6 +354,32 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
+    }
+
+    // --- Internal helpers ---
+
+    function _bankroll(address token) internal view returns (uint256) {
+        if (token == ETH_TOKEN) {
+            return address(this).balance;
+        }
+        return IERC20(token).balanceOf(address(this));
+    }
+
+    function _sendFunds(address recipient, uint256 amount, address token) internal {
+        if (token == ETH_TOKEN) {
+            (bool success, ) = recipient.call{value: amount}("");
+            if (!success) {
+                pendingPayouts[recipient][token] += amount;
+            }
+        } else {
+            try IERC20(token).transfer(recipient, amount) returns (bool success) {
+                if (!success) {
+                    pendingPayouts[recipient][token] += amount;
+                }
+            } catch {
+                pendingPayouts[recipient][token] += amount;
+            }
+        }
     }
 
     receive() external payable {}
