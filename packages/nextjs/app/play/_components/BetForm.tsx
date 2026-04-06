@@ -49,7 +49,12 @@ export const BetForm = ({ gameType, onSubmit, isPending, customTokens }: BetForm
 
   const handleSubmit = () => {
     if (!betAmountEth) return;
-    const betAmount = parseEther(betAmountEth as `${number}`);
+    let betAmount: bigint;
+    try {
+      betAmount = parseEther(betAmountEth as `${number}`);
+    } catch {
+      return;
+    }
 
     if (gameType === "coinflip") {
       const betMask = coinflipChoice === "heads" ? 1n : 2n;

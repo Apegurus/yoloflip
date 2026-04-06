@@ -818,4 +818,95 @@ describe("YoloFlip", function () {
     expect(ethMaxWin).to.be.gt(0n);
     expect(tokenMaxWin).to.be.gt(0n);
   });
+
+  // ===================== SECURITY FIX TESTS =====================
+
+  it("H1: should revert constructor with zero admin address", async function () {
+    const YoloFlipFactory = await ethers.getContractFactory("YoloFlip");
+    await expect(
+      YoloFlipFactory.deploy(
+        ethers.ZeroAddress,
+        croupier.address,
+        secretSignerWallet.address,
+        houseEdgeBP,
+        minBetAmount,
+      ),
+    ).to.be.revertedWithCustomError(yoloFlip, "ZeroAddress");
+  });
+
+  it("H1: should revert constructor with zero croupier address", async function () {
+    const YoloFlipFactory = await ethers.getContractFactory("YoloFlip");
+    await expect(
+      YoloFlipFactory.deploy(admin.address, ethers.ZeroAddress, secretSignerWallet.address, houseEdgeBP, minBetAmount),
+    ).to.be.revertedWithCustomError(yoloFlip, "ZeroAddress");
+  });
+
+  it("H1: should revert constructor with zero secretSigner address", async function () {
+    const YoloFlipFactory = await ethers.getContractFactory("YoloFlip");
+    await expect(
+      YoloFlipFactory.deploy(admin.address, croupier.address, ethers.ZeroAddress, houseEdgeBP, minBetAmount),
+    ).to.be.revertedWithCustomError(yoloFlip, "ZeroAddress");
+  });
+
+  it("H1: should revert constructor with zero minBetAmount", async function () {
+    const YoloFlipFactory = await ethers.getContractFactory("YoloFlip");
+    await expect(
+      YoloFlipFactory.deploy(admin.address, croupier.address, secretSignerWallet.address, houseEdgeBP, 0n),
+    ).to.be.revertedWithCustomError(yoloFlip, "BetTooSmall");
+  });
+
+  it("C1: should revert when commitLastBlock exceeds uint40 max (truncation bypass)", async function () {
+    const block = await ethers.provider.getBlock("latest");
+    const validCommitLastBlock = BigInt(block!.number + 100);
+    // Add 2^40 to bypass truncation — signature would still verify but expiry is extended
+    const attackerCommitLastBlock = validCommitLastBlock + (1n << 40n);
+
+    const reveal = generateReveal();
+    const commit = revealToCommit(reveal);
+    const { v, r, s } = await signCommit(secretSignerWallet, validCommitLastBlock, commit, await yoloFlip.getAddress());
+
+    await expect(
+      yoloFlip
+        .connect(player)
+        .placeBet(1n, 2n, false, attackerCommitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
+    ).to.be.revertedWithCustomError(yoloFlip, "CommitExpired");
+  });
+
+  it("C3: should revert when bitmask has out-of-range bits (modulo=6, bit 10 set)", async function () {
+    // Bit 10 is outside modulo 6 range (0-5). Would inflate popcount → wrong payout odds.
+    const outOfRangeMask = (1n << 10n) | (1n << 0n); // bits 0 and 10
+    await expect(placeBet({ player, betMask: outOfRangeMask, modulo: 6n })).to.be.revertedWithCustomError(
+      yoloFlip,
+      "InvalidBetMask",
+    );
+  });
+
+  it("C2: should handle houseEdge change mid-flight without lockedInBets drift (settle)", async function () {
+    const { reveal, receipt } = await placeBet({ player, betMask: 1n, modulo: 2n });
+    const lockedAfterPlace = await yoloFlip.lockedInBets(ETH_TOKEN);
+    expect(lockedAfterPlace).to.be.gt(0n);
+
+    // Change house edge while bet is in flight
+    await yoloFlip.connect(admin).setHouseEdge(500n); // 5% instead of 2%
+
+    // Settle the bet — lockedInBets should return to 0 regardless of edge change
+    await settleBet(reveal, receipt.blockNumber);
+    const lockedAfterSettle = await yoloFlip.lockedInBets(ETH_TOKEN);
+    expect(lockedAfterSettle).to.equal(0n);
+  });
+
+  it("C2: should handle houseEdge change mid-flight without lockedInBets drift (refund)", async function () {
+    const { commit } = await placeBet({ player, betMask: 1n, modulo: 2n });
+    const lockedAfterPlace = await yoloFlip.lockedInBets(ETH_TOKEN);
+    expect(lockedAfterPlace).to.be.gt(0n);
+
+    // Change house edge while bet is in flight
+    await yoloFlip.connect(admin).setHouseEdge(500n);
+
+    // Expire and refund — lockedInBets should return to 0
+    await mine(257);
+    await yoloFlip.connect(player).refundBet(commit);
+    const lockedAfterRefund = await yoloFlip.lockedInBets(ETH_TOKEN);
+    expect(lockedAfterRefund).to.equal(0n);
+  });
 });

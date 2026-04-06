@@ -28,13 +28,14 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
     struct Bet {
         uint128 amount;
+        uint128 lockedAmount;       // possibleWinAmount frozen at placement (slot 1 = 32 bytes)
+        address gambler;
         uint8 modulo;
         uint8 rollUnder;
         bool isOver;
-        uint40 placeBlockNumber;
+        uint40 placeBlockNumber;    // (slot 2 = 28 bytes)
         uint40 mask;
-        address gambler;
-        address token;
+        address token;              // (slot 3 = 25 bytes)
     }
 
     // Configurable parameters
@@ -89,10 +90,16 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     event TokenAllowed(address indexed token, bool allowed);
 
     constructor(address admin, address croupier, address _secretSigner, uint256 _houseEdgeBP, uint256 _minBetAmount) {
+        // H1: validate constructor arguments
+        if (admin == address(0)) revert ZeroAddress();
+        if (croupier == address(0)) revert ZeroAddress();
+        if (_secretSigner == address(0)) revert ZeroAddress();
+        if (_minBetAmount == 0) revert BetTooSmall();
+        if (_houseEdgeBP > 500) revert InvalidHouseEdge();
+
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(CROUPIER_ROLE, croupier);
         secretSigner = _secretSigner;
-        if (_houseEdgeBP > 500) revert InvalidHouseEdge();
         houseEdgeBP = _houseEdgeBP;
         minBetAmount = _minBetAmount;
         maxProfitRatio = 500;
@@ -170,6 +177,8 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
     function _placeBet(PlaceBetParams memory p) internal {
         if (p.modulo < 2 || p.modulo > MAX_MODULO) revert InvalidModulo();
+        // C1: prevent uint40 truncation bypass on commitLastBlock
+        if (p.commitLastBlock > type(uint40).max) revert CommitExpired();
         if (block.number > p.commitLastBlock) revert CommitExpired();
         if (bets[p.commit].gambler != address(0)) revert BetAlreadyExists();
         if (p.amount < minBetAmount) revert BetTooSmall();
@@ -179,6 +188,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
         uint256 rollUnder = _computeRollUnder(p.betMask, p.modulo, p.betOver);
 
+        // C2: freeze possibleWinAmount at placement time using current houseEdgeBP
         uint256 possibleWinAmount = getWinAmount(p.amount, p.modulo, rollUnder);
         uint256 availableBankroll = _bankroll(p.token) - lockedInBets[p.token];
         if (possibleWinAmount - p.amount > (availableBankroll * maxProfitRatio) / 10000) {
@@ -190,12 +200,13 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
         bets[p.commit] = Bet({
             amount: p.amount,
+            lockedAmount: uint128(possibleWinAmount),
+            gambler: msg.sender,
             modulo: uint8(p.modulo),
             rollUnder: uint8(rollUnder),
             isOver: p.modulo > MAX_MASK_MODULO && p.betOver,
             placeBlockNumber: uint40(block.number),
             mask: p.modulo <= MAX_MASK_MODULO ? uint40(p.betMask) : 0,
-            gambler: msg.sender,
             token: p.token
         });
 
@@ -204,7 +215,8 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
     function _computeRollUnder(uint256 betMask, uint256 modulo, bool betOver) private pure returns (uint256 rollUnder) {
         if (modulo <= MAX_MASK_MODULO) {
-            if (betMask == 0 || betMask >= MAX_BET_MASK) revert InvalidBetMask();
+            // C3: reject bits above the modulo range
+            if (betMask == 0 || betMask >= (uint256(1) << modulo)) revert InvalidBetMask();
             rollUnder = ((betMask * POPCNT_MULT & POPCNT_MASK) % POPCNT_MODULO);
             if (rollUnder == 0 || rollUnder >= modulo) revert InvalidBetMask();
             return rollUnder;
@@ -242,22 +254,19 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
             }
         }
 
-        uint256 payout = 0;
-        if (win) {
-            payout = getWinAmount(bet.amount, bet.modulo, bet.rollUnder);
-        }
-
-        uint128 amount = bet.amount;
+        // C2: use stored lockedAmount instead of recomputing with potentially changed houseEdgeBP
+        uint128 lockedAmount = bet.lockedAmount;
+        uint256 payout = win ? lockedAmount : 0;
         uint8 betModulo = bet.modulo;
         address gambler = bet.gambler;
         address token = bet.token;
-        uint256 possibleWinAmount = getWinAmount(amount, betModulo, bet.rollUnder);
-        lockedInBets[token] -= uint128(possibleWinAmount);
+
+        lockedInBets[token] -= lockedAmount;
         delete bets[commit];
 
-        emit BetSettled(commit, gambler, dice, win ? payout : 0, betModulo, token);
+        emit BetSettled(commit, gambler, dice, payout, betModulo, token);
 
-        if (win && payout > 0) {
+        if (payout > 0) {
             _sendFunds(gambler, payout, token);
         }
     }
@@ -272,7 +281,8 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         address gambler = bet.gambler;
         address token = bet.token;
 
-        lockedInBets[token] -= uint128(getWinAmount(bet.amount, bet.modulo, bet.rollUnder));
+        // C2: use stored lockedAmount
+        lockedInBets[token] -= bet.lockedAmount;
         delete bets[commit];
 
         emit BetRefunded(commit, gambler, amount, token);
@@ -365,6 +375,8 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         return IERC20(token).balanceOf(address(this));
     }
 
+    // H2: use low-level call with SafeERC20-style return data handling to prevent
+    // double-payout with non-standard tokens that don't return data on transfer
     function _sendFunds(address recipient, uint256 amount, address token) internal {
         if (token == ETH_TOKEN) {
             (bool success, ) = recipient.call{value: amount}("");
@@ -372,11 +384,8 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
                 pendingPayouts[recipient][token] += amount;
             }
         } else {
-            try IERC20(token).transfer(recipient, amount) returns (bool success) {
-                if (!success) {
-                    pendingPayouts[recipient][token] += amount;
-                }
-            } catch {
+            (bool ok, bytes memory ret) = token.call(abi.encodeCall(IERC20.transfer, (recipient, amount)));
+            if (!ok || (ret.length != 0 && !abi.decode(ret, (bool)))) {
                 pendingPayouts[recipient][token] += amount;
             }
         }

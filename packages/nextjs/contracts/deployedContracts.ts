@@ -622,6 +622,16 @@ const deployedContracts = {
               type: "uint128",
             },
             {
+              internalType: "uint128",
+              name: "lockedAmount",
+              type: "uint128",
+            },
+            {
+              internalType: "address",
+              name: "gambler",
+              type: "address",
+            },
+            {
               internalType: "uint8",
               name: "modulo",
               type: "uint8",
@@ -645,11 +655,6 @@ const deployedContracts = {
               internalType: "uint40",
               name: "mask",
               type: "uint40",
-            },
-            {
-              internalType: "address",
-              name: "gambler",
-              type: "address",
             },
             {
               internalType: "address",

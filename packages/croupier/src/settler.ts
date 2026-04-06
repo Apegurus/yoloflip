@@ -4,6 +4,7 @@ import { config } from "./config";
 import { getReveal, deleteReveal, getAllReveals, countReveals } from "./revealStore";
 
 const RETRY_INTERVAL_MS = 30_000;
+const inFlight = new Set<string>();
 
 export async function startSettler(
   provider: ethers.Provider,
@@ -30,15 +31,23 @@ export async function startSettler(
         return;
       }
 
+      if (inFlight.has(commitKey)) {
+        console.log(`[Settler] Bet ${commitKey} already in-flight, skipping`);
+        return;
+      }
+
       // Wait 1 block to ensure blockhash is available
       await sleep(2000);
 
+      inFlight.add(commitKey);
       try {
         await settleBetOnChain(contract, provider, commit, reveal);
         deleteReveal(commitKey);
       } catch (error) {
         console.error(`[Settler] Failed to settle bet ${commitKey}:`, error);
         // Will be retried by the sweep
+      } finally {
+        inFlight.delete(commitKey);
       }
     },
   );
@@ -62,7 +71,10 @@ async function retrySweep(contract: ethers.Contract, provider: ethers.Provider):
   console.log(`[Settler] Retry sweep: ${reveals.length} pending reveals`);
 
   for (const { commit, reveal } of reveals) {
+    if (inFlight.has(commit)) continue;
+
     const commitUint = BigInt(commit);
+    inFlight.add(commit);
     try {
       const bet = await contract.bets(commitUint);
       if (bet.amount === 0n) {
@@ -85,6 +97,8 @@ async function retrySweep(contract: ethers.Contract, provider: ethers.Provider):
       deleteReveal(commit);
     } catch (error) {
       console.error(`[Settler] Retry failed for ${commit}:`, error);
+    } finally {
+      inFlight.delete(commit);
     }
   }
 }

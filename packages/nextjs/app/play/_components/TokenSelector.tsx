@@ -51,7 +51,12 @@ export const TokenSelector = ({ selected, onSelect, betAmount, customTokens = []
 
   const { writeContractAsync: approveAsync, isPending: isApproving } = useWriteContract();
 
-  const betAmountWei = betAmount ? parseEther(betAmount as `${number}`) : 0n;
+  let betAmountWei = 0n;
+  try {
+    betAmountWei = betAmount ? parseEther(betAmount as `${number}`) : 0n;
+  } catch {
+    // Invalid input during typing (e.g. "0.", "1.2.3") — treat as zero
+  }
   const needsApproval = selected.address && allowance !== undefined && allowance < betAmountWei;
 
   const handleApprove = async () => {
@@ -90,7 +95,9 @@ export const TokenSelector = ({ selected, onSelect, betAmount, customTokens = []
             </option>
           ))}
         </select>
-        <span className="text-xs opacity-50">Bal: {Number(formattedBalance).toFixed(4)}</span>
+        <span className="text-xs opacity-50">
+          Bal: {balance !== undefined ? Number(formattedBalance).toFixed(4) : "—"}
+        </span>
       </div>
 
       {needsApproval && betAmountWei > 0n && (
