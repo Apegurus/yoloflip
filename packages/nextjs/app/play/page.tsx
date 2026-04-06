@@ -5,6 +5,7 @@ import { BetForm } from "./_components/BetForm";
 import { BetHistory } from "./_components/BetHistory";
 import { GameResult } from "./_components/GameResult";
 import { GameSelector } from "./_components/GameSelector";
+import type { TokenSelection } from "./_components/TokenSelector";
 import type { BetResult, GameType } from "./types";
 import type { NextPage } from "next";
 import { useAccount } from "wagmi";
@@ -51,7 +52,13 @@ const Play: NextPage = () => {
     },
   });
 
-  const handlePlaceBet = async (betMask: bigint, modulo: bigint, betAmount: bigint, betOver: boolean) => {
+  const handlePlaceBet = async (
+    betMask: bigint,
+    modulo: bigint,
+    betAmount: bigint,
+    betOver: boolean,
+    token: TokenSelection,
+  ) => {
     if (!isConnected) {
       notification.error("Please connect your wallet first");
       return;
@@ -62,20 +69,40 @@ const Play: NextPage = () => {
       if (!res.ok) throw new Error("Failed to get commit from croupier");
       const { commit, commitLastBlock, v, r, s } = (await res.json()) as CroupierCommitResponse;
 
-      await writeContractAsync({
-        functionName: "placeBet",
-        args: [
-          betMask,
-          modulo,
-          betOver,
-          BigInt(commitLastBlock),
-          BigInt(commit),
-          v,
-          r as `0x${string}`,
-          s as `0x${string}`,
-        ],
-        value: betAmount,
-      });
+      if (token.address) {
+        // ERC20 token bet
+        await writeContractAsync({
+          functionName: "placeBetWithToken",
+          args: [
+            betMask,
+            modulo,
+            betOver,
+            token.address,
+            betAmount,
+            BigInt(commitLastBlock),
+            BigInt(commit),
+            v,
+            r as `0x${string}`,
+            s as `0x${string}`,
+          ],
+        });
+      } else {
+        // Native ETH bet
+        await writeContractAsync({
+          functionName: "placeBet",
+          args: [
+            betMask,
+            modulo,
+            betOver,
+            BigInt(commitLastBlock),
+            BigInt(commit),
+            v,
+            r as `0x${string}`,
+            s as `0x${string}`,
+          ],
+          value: betAmount,
+        });
+      }
 
       notification.success("Bet placed! Waiting for result...");
     } catch (error) {

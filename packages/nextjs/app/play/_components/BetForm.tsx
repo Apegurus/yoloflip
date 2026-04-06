@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import type { GameType } from "../types";
+import { TokenSelector } from "./TokenSelector";
+import type { TokenSelection } from "./TokenSelector";
 import { OUTSIDE_BETS, ROULETTE_MODULO, ROULETTE_TABLE_ROWS, STRAIGHT_BETS, getNumberColor } from "./rouletteBets";
 import type { RouletteBetType } from "./rouletteBets";
 import { EtherInput } from "@scaffold-ui/components";
@@ -9,14 +11,16 @@ import { parseEther } from "viem";
 
 type BetFormProps = {
   gameType: GameType;
-  onSubmit: (betMask: bigint, modulo: bigint, betAmount: bigint, betOver: boolean) => void;
+  onSubmit: (betMask: bigint, modulo: bigint, betAmount: bigint, betOver: boolean, token: TokenSelection) => void;
   isPending: boolean;
+  customTokens?: TokenSelection[];
 };
 
 const DICE_FACES = [1, 2, 3, 4, 5, 6];
 
-export const BetForm = ({ gameType, onSubmit, isPending }: BetFormProps) => {
+export const BetForm = ({ gameType, onSubmit, isPending, customTokens }: BetFormProps) => {
   const [betAmountEth, setBetAmountEth] = useState("");
+  const [selectedToken, setSelectedToken] = useState<TokenSelection>({ address: null, symbol: "ETH" });
 
   // Coinflip state
   const [coinflipChoice, setCoinflipChoice] = useState<"heads" | "tails">("heads");
@@ -49,19 +53,19 @@ export const BetForm = ({ gameType, onSubmit, isPending }: BetFormProps) => {
 
     if (gameType === "coinflip") {
       const betMask = coinflipChoice === "heads" ? 1n : 2n;
-      onSubmit(betMask, 2n, betAmount, false);
+      onSubmit(betMask, 2n, betAmount, false, selectedToken);
     } else if (gameType === "dice") {
       let betMask = 0n;
       selectedDiceFaces.forEach(face => {
         betMask |= 1n << BigInt(face - 1);
       });
-      onSubmit(betMask, 6n, betAmount, false);
+      onSubmit(betMask, 6n, betAmount, false, selectedToken);
     } else if (gameType === "roulette") {
       if (!rouletteBet) return;
-      onSubmit(rouletteBet.mask, ROULETTE_MODULO, betAmount, false);
+      onSubmit(rouletteBet.mask, ROULETTE_MODULO, betAmount, false, selectedToken);
     } else if (gameType === "range") {
       const betOver = rangeDirection === "over";
-      onSubmit(BigInt(rangeTarget), 100n, betAmount, betOver);
+      onSubmit(BigInt(rangeTarget), 100n, betAmount, betOver, selectedToken);
     }
   };
 
@@ -234,6 +238,16 @@ export const BetForm = ({ gameType, onSubmit, isPending }: BetFormProps) => {
             </div>
           </div>
         )}
+
+        {/* ===== TOKEN SELECTOR ===== */}
+        <div className="my-3">
+          <TokenSelector
+            selected={selectedToken}
+            onSelect={setSelectedToken}
+            betAmount={betAmountEth}
+            customTokens={customTokens}
+          />
+        </div>
 
         {/* ===== BET AMOUNT & SUBMIT ===== */}
         <div className="my-3">

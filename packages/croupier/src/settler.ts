@@ -16,11 +16,12 @@ export async function startSettler(
 
   contract.on(
     "BetPlaced",
-    async (commit: bigint, gambler: string, amount: bigint, _betMask: bigint, _modulo: bigint) => {
+    async (commit: bigint, gambler: string, amount: bigint, _betMask: bigint, _modulo: bigint, token: string, _isOver: boolean) => {
       const commitKey = "0x" + commit.toString(16).padStart(64, "0");
+      const isToken = token !== ethers.ZeroAddress;
 
       console.log(
-        `[Settler] BetPlaced: commit=${commitKey}, gambler=${gambler}, amount=${ethers.formatEther(amount)} ETH`,
+        `[Settler] BetPlaced: commit=${commitKey}, gambler=${gambler}, amount=${isToken ? amount.toString() : ethers.formatEther(amount) + " ETH"}${isToken ? `, token=${token}` : ""}`,
       );
 
       const reveal = getReveal(commitKey);
