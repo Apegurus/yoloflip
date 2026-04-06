@@ -261,7 +261,7 @@ describe("YoloFlip", function () {
 
     await expect(tx)
       .to.emit(yoloFlip, "BetSettled")
-      .withArgs(winning.commit, player.address, winning.dice, expectedPayout);
+      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 2n);
 
     expect(receipt).to.not.equal(null);
     expect(afterBalance - beforeBalance).to.equal(expectedPayout);
@@ -273,7 +273,7 @@ describe("YoloFlip", function () {
     const tx = await yoloFlip.connect(croupier).settleBet(losing.reveal, losing.blockHash);
     const afterBalance = await ethers.provider.getBalance(player.address);
 
-    await expect(tx).to.emit(yoloFlip, "BetSettled").withArgs(losing.commit, player.address, losing.dice, 0n);
+    await expect(tx).to.emit(yoloFlip, "BetSettled").withArgs(losing.commit, player.address, losing.dice, 0n, 2n);
     expect(afterBalance - beforeBalance).to.equal(0n);
   });
 
@@ -284,7 +284,7 @@ describe("YoloFlip", function () {
 
     await expect(yoloFlip.connect(croupier).settleBet(winning.reveal, winning.blockHash))
       .to.emit(yoloFlip, "BetSettled")
-      .withArgs(winning.commit, player.address, winning.dice, expectedPayout);
+      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 6n);
   });
 
   it("should track lockedInBets correctly (increase on place, decrease on settle)", async function () {
@@ -430,5 +430,47 @@ describe("YoloFlip", function () {
     await expect(yoloFlip.connect(player).settleBet(reveal, block!.hash!))
       .to.be.revertedWithCustomError(yoloFlip, "AccessControlUnauthorizedAccount")
       .withArgs(player.address, croupierRole);
+  });
+
+  it("should emit SecretSignerChanged when updating signer", async function () {
+    const newSigner = ethers.Wallet.createRandom().address;
+    await expect(yoloFlip.connect(admin).setSecretSigner(newSigner))
+      .to.emit(yoloFlip, "SecretSignerChanged")
+      .withArgs(newSigner);
+    expect(await yoloFlip.secretSigner()).to.equal(newSigner);
+  });
+
+  it("should emit MinBetChanged when updating min bet", async function () {
+    const newMinBet = ethers.parseEther("0.01");
+    await expect(yoloFlip.connect(admin).setMinBet(newMinBet)).to.emit(yoloFlip, "MinBetChanged").withArgs(newMinBet);
+    expect(await yoloFlip.minBetAmount()).to.equal(newMinBet);
+  });
+
+  it("should revert setMinBet with zero", async function () {
+    await expect(yoloFlip.connect(admin).setMinBet(0n)).to.be.revertedWithCustomError(yoloFlip, "BetTooSmall");
+  });
+
+  it("should emit MaxProfitRatioChanged when updating max profit ratio", async function () {
+    await expect(yoloFlip.connect(admin).setMaxProfitRatio(800n))
+      .to.emit(yoloFlip, "MaxProfitRatioChanged")
+      .withArgs(800n);
+    expect(await yoloFlip.maxProfitRatio()).to.equal(800n);
+  });
+
+  it("should emit HouseFundsWithdrawn when withdrawing", async function () {
+    const withdrawAmount = ethers.parseEther("1");
+    await expect(yoloFlip.connect(admin).withdrawHouseFunds(admin.address, withdrawAmount))
+      .to.emit(yoloFlip, "HouseFundsWithdrawn")
+      .withArgs(admin.address, withdrawAmount);
+  });
+
+  it("should include modulo in BetSettled event", async function () {
+    const winning = await findOutcomeBet(true, 1n, 2n);
+    const tx = await yoloFlip.connect(croupier).settleBet(winning.reveal, winning.blockHash);
+    const expectedPayout = await yoloFlip.getWinAmount(defaultBetAmount, 2n, 1n);
+
+    await expect(tx)
+      .to.emit(yoloFlip, "BetSettled")
+      .withArgs(winning.commit, player.address, winning.dice, expectedPayout, 2n);
   });
 });

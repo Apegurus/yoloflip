@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { BetForm } from "./_components/BetForm";
 import { BetHistory } from "./_components/BetHistory";
 import { GameResult } from "./_components/GameResult";
@@ -25,7 +25,6 @@ const Play: NextPage = () => {
   const { address, isConnected } = useAccount();
   const [selectedGame, setSelectedGame] = useState<GameType>("coinflip");
   const [lastResult, setLastResult] = useState<BetResult | null>(null);
-  const pendingModuloRef = useRef<bigint>(2n);
 
   const { writeContractAsync, isPending } = useScaffoldWriteContract({
     contractName: "YoloFlip",
@@ -36,7 +35,7 @@ const Play: NextPage = () => {
     eventName: "BetSettled",
     onLogs: logs => {
       for (const log of logs) {
-        const { commit, gambler, dice, payout } = log.args;
+        const { commit, gambler, dice, payout, modulo } = log.args;
         if (commit === undefined || gambler === undefined || dice === undefined || payout === undefined) continue;
         if (gambler.toLowerCase() !== address?.toLowerCase()) continue;
 
@@ -45,7 +44,7 @@ const Play: NextPage = () => {
           gambler,
           dice,
           payout,
-          modulo: pendingModuloRef.current,
+          modulo: modulo ?? 2n,
         });
         notification.info(payout > 0n ? "You won!" : "Better luck next time!");
       }
@@ -62,8 +61,6 @@ const Play: NextPage = () => {
       const res = await fetch(`${CROUPIER_URL}/api/commit`);
       if (!res.ok) throw new Error("Failed to get commit from croupier");
       const { commit, commitLastBlock, v, r, s } = (await res.json()) as CroupierCommitResponse;
-
-      pendingModuloRef.current = modulo;
 
       await writeContractAsync({
         functionName: "placeBet",

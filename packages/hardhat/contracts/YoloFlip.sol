@@ -65,7 +65,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     error TransferFailed();
 
     event BetPlaced(uint256 indexed commit, address indexed gambler, uint256 amount, uint256 betMask, uint256 modulo);
-    event BetSettled(uint256 indexed commit, address indexed gambler, uint256 dice, uint256 payout);
+    event BetSettled(uint256 indexed commit, address indexed gambler, uint256 dice, uint256 payout, uint256 modulo);
     event BetRefunded(uint256 indexed commit, address indexed gambler, uint256 amount);
     event HouseEdgeChanged(uint256 newEdge);
     event SecretSignerChanged(address newSigner);
@@ -159,12 +159,13 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         }
 
         uint128 amount = bet.amount;
+        uint8 betModulo = bet.modulo;
         address gambler = bet.gambler;
-        uint256 possibleWinAmount = getWinAmount(amount, bet.modulo, bet.rollUnder);
+        uint256 possibleWinAmount = getWinAmount(amount, betModulo, bet.rollUnder);
         lockedInBets -= uint128(possibleWinAmount);
         delete bets[commit];
 
-        emit BetSettled(commit, gambler, dice, win ? payout : 0);
+        emit BetSettled(commit, gambler, dice, win ? payout : 0, betModulo);
 
         if (win && payout > 0) {
             (bool success, ) = gambler.call{value: payout}("");

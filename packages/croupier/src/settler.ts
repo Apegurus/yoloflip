@@ -1,7 +1,9 @@
 import { ethers } from "ethers";
 import { YOLOFLIP_ABI } from "./abi";
 import { config } from "./config";
-import { getReveal, deleteReveal, countReveals } from "./revealStore";
+import { getReveal, deleteReveal, getAllReveals, countReveals } from "./revealStore";
+
+const RETRY_INTERVAL_MS = 30_000;
 
 export async function startSettler(
   provider: ethers.Provider,
@@ -35,13 +37,55 @@ export async function startSettler(
         deleteReveal(commitKey);
       } catch (error) {
         console.error(`[Settler] Failed to settle bet ${commitKey}:`, error);
+        // Will be retried by the sweep
       }
     },
   );
 
+  // Periodic retry sweep for unsettled reveals
+  setInterval(() => {
+    retrySweep(contract, provider).catch(err => {
+      console.error(`[Settler] Retry sweep error:`, err);
+    });
+  }, RETRY_INTERVAL_MS);
+
   provider.on("error", (error: unknown) => {
     console.error(`[Settler] Provider error:`, error);
   });
+}
+
+async function retrySweep(contract: ethers.Contract, provider: ethers.Provider): Promise<void> {
+  const reveals = getAllReveals();
+  if (reveals.length === 0) return;
+
+  console.log(`[Settler] Retry sweep: ${reveals.length} pending reveals`);
+
+  for (const { commit, reveal } of reveals) {
+    const commitUint = BigInt(commit);
+    try {
+      const bet = await contract.bets(commitUint);
+      if (bet.amount === 0n) {
+        // Bet was already settled or never placed — clean up
+        deleteReveal(commit);
+        continue;
+      }
+
+      const placeBlockNumber = Number(bet.placeBlockNumber);
+      const currentBlock = await provider.getBlockNumber();
+
+      if (currentBlock > placeBlockNumber + 256) {
+        // Bet expired — player can refund, clean up reveal
+        console.log(`[Settler] Reveal ${commit} expired, removing`);
+        deleteReveal(commit);
+        continue;
+      }
+
+      await settleBetOnChain(contract, provider, commitUint, reveal);
+      deleteReveal(commit);
+    } catch (error) {
+      console.error(`[Settler] Retry failed for ${commit}:`, error);
+    }
+  }
 }
 
 async function settleBetOnChain(

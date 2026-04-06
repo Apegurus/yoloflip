@@ -41,6 +41,11 @@ export function countReveals(): number {
   return row.count;
 }
 
+export function getAllReveals(): { commit: string; reveal: bigint }[] {
+  const rows = getDb().prepare("SELECT commit, reveal FROM reveals").all() as { commit: string; reveal: string }[];
+  return rows.map(row => ({ commit: row.commit, reveal: BigInt(row.reveal) }));
+}
+
 export function pruneOldReveals(maxAgeSeconds = 3600): number {
   const result = getDb().prepare("DELETE FROM reveals WHERE created_at < unixepoch() - ?").run(maxAgeSeconds);
   return result.changes;

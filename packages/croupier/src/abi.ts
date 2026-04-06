@@ -1,7 +1,7 @@
 export const YOLOFLIP_ABI = [
   // Events
   "event BetPlaced(uint256 indexed commit, address indexed gambler, uint256 amount, uint256 betMask, uint256 modulo)",
-  "event BetSettled(uint256 indexed commit, address indexed gambler, uint256 dice, uint256 payout)",
+  "event BetSettled(uint256 indexed commit, address indexed gambler, uint256 dice, uint256 payout, uint256 modulo)",
   "event BetRefunded(uint256 indexed commit, address indexed gambler, uint256 amount)",
 
   // Functions

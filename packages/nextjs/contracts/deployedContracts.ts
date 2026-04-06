@@ -282,6 +282,12 @@ const deployedContracts = {
               name: "payout",
               type: "uint256",
             },
+            {
+              indexed: false,
+              internalType: "uint256",
+              name: "modulo",
+              type: "uint256",
+            },
           ],
           name: "BetSettled",
           type: "event",
@@ -297,6 +303,64 @@ const deployedContracts = {
             },
           ],
           name: "HouseEdgeChanged",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "address",
+              name: "recipient",
+              type: "address",
+            },
+            {
+              indexed: false,
+              internalType: "uint256",
+              name: "amount",
+              type: "uint256",
+            },
+          ],
+          name: "HouseFundsWithdrawn",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: false,
+              internalType: "uint256",
+              name: "newMaxProfitRatio",
+              type: "uint256",
+            },
+          ],
+          name: "MaxProfitRatioChanged",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: false,
+              internalType: "uint256",
+              name: "newMinBet",
+              type: "uint256",
+            },
+          ],
+          name: "MinBetChanged",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: false,
+              internalType: "address",
+              name: "newSigner",
+              type: "address",
+            },
+          ],
+          name: "SecretSignerChanged",
           type: "event",
         },
         {
