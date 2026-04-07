@@ -15,7 +15,6 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
     uint256 private constant MAX_MODULO = 100;
     uint256 private constant MAX_MASK_MODULO = 40;
-    uint256 private constant MAX_BET_MASK = 2 ** MAX_MASK_MODULO;
     uint256 private constant BET_EXPIRATION_BLOCKS = 256;
 
     // Dice2.Win O(1) popcount constants for numbers up to 2^40
@@ -55,13 +54,13 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     // Pull-fallback for failed sends (gambler => token => amount)
     mapping(address => mapping(address => uint256)) public pendingPayouts;
 
-    // M3: total pending payouts per token (subtracted from available bankroll)
+    // Total pending payouts per token (subtracted from available bankroll)
     mapping(address => uint256) public totalPendingPayouts;
 
     // Token whitelist (ETH is always allowed)
     mapping(address => bool) public allowedTokens;
 
-    // L1: per-token minimum bet (0 = use global minBetAmount)
+    // Per-token minimum bet (0 = use global minBetAmount)
     mapping(address => uint256) public tokenMinBet;
 
     error BetAlreadyExists();
@@ -98,7 +97,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
     event TokenMinBetChanged(address indexed token, uint256 newMinBet);
 
     constructor(address admin, address croupier, address _secretSigner, uint256 _houseEdgeBP, uint256 _minBetAmount) {
-        // H1: validate constructor arguments
+        // Validate constructor arguments
         if (admin == address(0)) revert ZeroAddress();
         if (croupier == address(0)) revert ZeroAddress();
         if (_secretSigner == address(0)) revert ZeroAddress();
@@ -187,11 +186,11 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
     function _placeBet(PlaceBetParams memory p) internal {
         if (p.modulo < 2 || p.modulo > MAX_MODULO) revert InvalidModulo();
-        // C1: prevent uint40 truncation bypass on commitLastBlock
+        // Prevent uint40 truncation bypass on commitLastBlock
         if (p.commitLastBlock > type(uint40).max) revert CommitExpired();
         if (block.number > p.commitLastBlock) revert CommitExpired();
         if (bets[p.commit].gambler != address(0)) revert BetAlreadyExists();
-        // L1: use per-token min bet if set, otherwise global
+        // Use per-token min bet if set, otherwise global
         uint256 effectiveMinBet = tokenMinBet[p.token] > 0 ? tokenMinBet[p.token] : minBetAmount;
         if (p.amount < effectiveMinBet) revert BetTooSmall();
 
@@ -200,8 +199,9 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
         uint256 rollUnder = _computeRollUnder(p.betMask, p.modulo, p.betOver);
 
-        // C2: freeze possibleWinAmount at placement time using current houseEdgeBP
+        // Freeze possibleWinAmount at placement time (immune to later houseEdgeBP changes)
         uint256 possibleWinAmount = getWinAmount(p.amount, p.modulo, rollUnder);
+        if (possibleWinAmount > type(uint128).max) revert AmountOverflow();
         uint256 availableBankroll = _bankroll(p.token) - lockedInBets[p.token];
         if (possibleWinAmount - p.amount > (availableBankroll * maxProfitRatio) / 10000) {
             revert ProfitExceedsMax();
@@ -227,7 +227,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
     function _computeRollUnder(uint256 betMask, uint256 modulo, bool betOver) private pure returns (uint256 rollUnder) {
         if (modulo <= MAX_MASK_MODULO) {
-            // C3: reject bits above the modulo range
+            // Reject bits above the modulo range to prevent popcount inflation
             if (betMask == 0 || betMask >= (uint256(1) << modulo)) revert InvalidBetMask();
             rollUnder = ((betMask * POPCNT_MULT & POPCNT_MASK) % POPCNT_MODULO);
             if (rollUnder == 0 || rollUnder >= modulo) revert InvalidBetMask();
@@ -266,7 +266,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
             }
         }
 
-        // C2: use stored lockedAmount instead of recomputing with potentially changed houseEdgeBP
+        // Use stored lockedAmount (immune to houseEdgeBP changes after placement)
         uint128 lockedAmount = bet.lockedAmount;
         uint256 payout = win ? lockedAmount : 0;
         uint8 betModulo = bet.modulo;
@@ -293,7 +293,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         address gambler = bet.gambler;
         address token = bet.token;
 
-        // C2: use stored lockedAmount
+        // Use stored lockedAmount (immune to houseEdgeBP changes)
         lockedInBets[token] -= bet.lockedAmount;
         delete bets[commit];
 
@@ -386,7 +386,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
 
     // --- Internal helpers ---
 
-    // M3: bankroll excludes both locked bets and pending (unclaimed) payouts
+    // Bankroll excludes both locked bets and pending (unclaimed) payouts
     function _bankroll(address token) internal view returns (uint256) {
         uint256 balance;
         if (token == ETH_TOKEN) {
@@ -398,7 +398,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         return balance > pending ? balance - pending : 0;
     }
 
-    // H2: use low-level call with SafeERC20-style return data handling to prevent
+    // Low-level call with SafeERC20-style return data handling to prevent
     // double-payout with non-standard tokens that don't return data on transfer
     function _sendFunds(address recipient, uint256 amount, address token) internal {
         if (token == ETH_TOKEN) {

@@ -4,6 +4,7 @@ import { formatEther, parseEther } from "viem";
 import { erc20Abi } from "viem";
 import { useAccount, useBalance, useReadContract, useWriteContract } from "wagmi";
 import { useDeployedContractInfo } from "~~/hooks/scaffold-eth";
+import { notification } from "~~/utils/scaffold-eth";
 
 export type TokenSelection = {
   address: `0x${string}` | null; // null = ETH
@@ -70,6 +71,7 @@ export const TokenSelector = ({ selected, onSelect, betAmount, customTokens = []
       });
     } catch (error) {
       console.error("Approve failed:", error);
+      notification.error(`Failed to approve ${selected.symbol}`);
     }
   };
 
