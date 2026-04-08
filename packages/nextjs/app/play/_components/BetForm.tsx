@@ -7,20 +7,29 @@ import type { TokenSelection } from "./TokenSelector";
 import { OUTSIDE_BETS, ROULETTE_MODULO, ROULETTE_TABLE_ROWS, STRAIGHT_BETS, getNumberColor } from "./rouletteBets";
 import type { RouletteBetType } from "./rouletteBets";
 import { EtherInput } from "@scaffold-ui/components";
-import { parseEther } from "viem";
+import { parseUnits } from "viem";
 
 type BetFormProps = {
   gameType: GameType;
   onSubmit: (betMask: bigint, modulo: bigint, betAmount: bigint, betOver: boolean, token: TokenSelection) => void;
   isPending: boolean;
   customTokens?: TokenSelection[];
+  selectedToken: TokenSelection;
+  onTokenChange: (token: TokenSelection) => void;
 };
 
 const DICE_FACES = [1, 2, 3, 4, 5, 6];
 
-export const BetForm = ({ gameType, onSubmit, isPending, customTokens }: BetFormProps) => {
+export const BetForm = ({
+  gameType,
+  onSubmit,
+  isPending,
+  customTokens,
+  selectedToken,
+  onTokenChange,
+}: BetFormProps) => {
   const [betAmountEth, setBetAmountEth] = useState("");
-  const [selectedToken, setSelectedToken] = useState<TokenSelection>({ address: null, symbol: "ETH" });
+  const [tokenNeedsApproval, setTokenNeedsApproval] = useState(false);
 
   // Coinflip state
   const [coinflipChoice, setCoinflipChoice] = useState<"heads" | "tails">("heads");
@@ -51,7 +60,7 @@ export const BetForm = ({ gameType, onSubmit, isPending, customTokens }: BetForm
     if (!betAmountEth) return;
     let betAmount: bigint;
     try {
-      betAmount = parseEther(betAmountEth as `${number}`);
+      betAmount = parseUnits(betAmountEth as `${number}`, selectedToken.decimals);
     } catch {
       return;
     }
@@ -130,9 +139,9 @@ export const BetForm = ({ gameType, onSubmit, isPending, customTokens }: BetForm
                     className={`btn btn-sm ${
                       rouletteBet?.label === bet.label
                         ? bet.label === "Red"
-                          ? "bg-red-600 text-white border-red-600"
+                          ? "btn-error"
                           : bet.label === "Black"
-                            ? "bg-gray-800 text-white border-gray-800"
+                            ? "btn-neutral"
                             : "btn-accent"
                         : "btn-outline"
                     }`}
@@ -151,9 +160,7 @@ export const BetForm = ({ gameType, onSubmit, isPending, customTokens }: BetForm
               {/* Zero */}
               <div className="flex justify-center mb-1">
                 <button
-                  className={`btn btn-sm min-w-[2.5rem] ${
-                    rouletteBet?.label === "0" ? "bg-green-600 text-white border-green-600" : "btn-outline"
-                  }`}
+                  className={`btn btn-sm min-w-[2.5rem] ${rouletteBet?.label === "0" ? "btn-success" : "btn-outline"}`}
                   onClick={() => setRouletteBet(STRAIGHT_BETS[0])}
                 >
                   0
@@ -169,11 +176,11 @@ export const BetForm = ({ gameType, onSubmit, isPending, customTokens }: BetForm
                       const colorClass =
                         color === "red"
                           ? isSelected
-                            ? "bg-red-600 text-white border-red-600"
-                            : "btn-outline border-red-400 text-red-400"
+                            ? "btn-error"
+                            : "btn-outline btn-error"
                           : isSelected
-                            ? "bg-gray-800 text-white border-gray-800"
-                            : "btn-outline border-gray-500";
+                            ? "btn-neutral"
+                            : "btn-outline";
                       return (
                         <button
                           key={num}
@@ -248,9 +255,10 @@ export const BetForm = ({ gameType, onSubmit, isPending, customTokens }: BetForm
         <div className="my-3">
           <TokenSelector
             selected={selectedToken}
-            onSelect={setSelectedToken}
+            onSelect={onTokenChange}
             betAmount={betAmountEth}
             customTokens={customTokens}
+            onNeedsApprovalChange={setTokenNeedsApproval}
           />
         </div>
 
@@ -262,10 +270,10 @@ export const BetForm = ({ gameType, onSubmit, isPending, customTokens }: BetForm
         <button
           className="btn btn-primary w-full"
           onClick={handleSubmit}
-          disabled={isPending || !betAmountEth || (gameType === "roulette" && !rouletteBet)}
+          disabled={isPending || !betAmountEth || (gameType === "roulette" && !rouletteBet) || tokenNeedsApproval}
         >
           {isPending && <span className="loading loading-spinner loading-sm" />}
-          {isPending ? "Placing Bet..." : "Place Bet 🎰"}
+          {isPending ? "Placing Bet..." : tokenNeedsApproval ? "Approve Token First" : "Place Bet"}
         </button>
       </div>
     </div>

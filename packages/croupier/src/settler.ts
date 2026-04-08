@@ -43,8 +43,8 @@ export async function startSettler(
         return;
       }
 
-      // L5: configurable block wait
-      await sleep(config.blockWaitMs);
+      // Wait until at least one block has been mined after bet placement
+      await waitForBlock(provider, await provider.getBlockNumber());
 
       inFlight.add(commitKey);
       try {
@@ -93,7 +93,7 @@ async function retrySweep(contract: ethers.Contract, provider: ethers.Provider):
       const placeBlockNumber = Number(bet.placeBlockNumber);
       const currentBlock = await provider.getBlockNumber();
 
-      if (currentBlock > placeBlockNumber + 256) {
+      if (currentBlock > placeBlockNumber + 250) {
         // Bet expired — player can refund, clean up reveal
         console.log(`[Settler] Reveal ${commit} expired, removing`);
         deleteReveal(commit);
@@ -125,9 +125,9 @@ async function settleBetOnChain(
   const placeBlockNumber = Number(bet.placeBlockNumber);
   const currentBlock = await provider.getBlockNumber();
 
-  if (currentBlock > placeBlockNumber + 256) {
+  if (currentBlock > placeBlockNumber + 250) {
     console.warn(
-      `[Settler] Bet expired at block ${placeBlockNumber + 256}, current: ${currentBlock}`,
+      `[Settler] Bet expired at block ${placeBlockNumber + 250}, current: ${currentBlock}`,
     );
     return;
   }
@@ -149,4 +149,14 @@ async function settleBetOnChain(
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForBlock(provider: ethers.Provider, minBlock: number): Promise<void> {
+  const maxAttempts = 60;
+  for (let i = 0; i < maxAttempts; i++) {
+    const current = await provider.getBlockNumber();
+    if (current > minBlock) return;
+    await sleep(1000);
+  }
+  console.warn(`[Settler] Timed out waiting for block > ${minBlock}`);
 }

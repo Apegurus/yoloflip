@@ -5,17 +5,32 @@ import { parseEther } from "ethers";
 /**
  * Deploys the YoloFlip commit-reveal gambling contract.
  * Constructor args: admin, croupier, secretSigner, houseEdgeBP, minBetAmount
+ *
+ * Role addresses can be overridden via environment variables:
+ *   YOLOFLIP_ADMIN         — admin (DEFAULT_ADMIN_ROLE), defaults to deployer
+ *   YOLOFLIP_CROUPIER      — croupier (CROUPIER_ROLE), defaults to deployer
+ *   YOLOFLIP_SECRET_SIGNER — secretSigner, defaults to deployer
  */
 const deployYoloFlip: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployer } = await hre.getNamedAccounts();
   const { deploy } = hre.deployments;
 
+  const admin = process.env.YOLOFLIP_ADMIN ?? deployer;
+  const croupier = process.env.YOLOFLIP_CROUPIER ?? deployer;
+  const secretSigner = process.env.YOLOFLIP_SECRET_SIGNER ?? deployer;
+
+  if (admin !== deployer || croupier !== deployer || secretSigner !== deployer) {
+    console.log(`  Admin: ${admin}`);
+    console.log(`  Croupier: ${croupier}`);
+    console.log(`  SecretSigner: ${secretSigner}`);
+  }
+
   const deployed = await deploy("YoloFlip", {
     from: deployer,
     args: [
-      deployer, // admin (DEFAULT_ADMIN_ROLE)
-      deployer, // croupier (CROUPIER_ROLE) — for local dev
-      deployer, // secretSigner — use deployer address for local dev
+      admin, // admin (DEFAULT_ADMIN_ROLE)
+      croupier, // croupier (CROUPIER_ROLE)
+      secretSigner, // secretSigner
       200, // houseEdgeBP — 2% house edge
       parseEther("0.001"), // minBetAmount — 0.001 ETH minimum bet
     ],

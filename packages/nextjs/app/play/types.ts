@@ -7,4 +7,6 @@ export type BetResult = {
   payout: bigint;
   modulo: bigint;
   token: string;
+  tokenSymbol: string;
+  tokenDecimals: number;
 };

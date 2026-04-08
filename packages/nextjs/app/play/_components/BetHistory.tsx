@@ -1,6 +1,6 @@
 "use client";
 
-import { formatEther } from "viem";
+import { formatEther, zeroAddress } from "viem";
 import { useScaffoldEventHistory } from "~~/hooks/scaffold-eth";
 
 export const BetHistory = () => {
@@ -19,7 +19,8 @@ export const BetHistory = () => {
     );
   }
 
-  const recentBets = (events ?? []).slice(0, 10).reverse();
+  // useScaffoldEventHistory returns newest-first; take the 10 most recent
+  const recentBets = (events ?? []).slice(0, 10);
 
   return (
     <div className="w-full max-w-2xl">
@@ -32,7 +33,7 @@ export const BetHistory = () => {
             <thead>
               <tr>
                 <th>Result</th>
-                <th>Dice</th>
+                <th>Outcome</th>
                 <th>Payout</th>
               </tr>
             </thead>
@@ -41,7 +42,7 @@ export const BetHistory = () => {
                 const payout = event.args.payout ?? 0n;
                 const dice = event.args.dice ?? 0n;
                 const token = event.args.token;
-                const isETH = !token || token === "0x0000000000000000000000000000000000000000";
+                const isETH = !token || token === zeroAddress;
                 const won = payout > 0n;
                 return (
                   <tr key={event.args.commit?.toString()}>

@@ -8,9 +8,10 @@ import { GameSelector } from "./_components/GameSelector";
 import type { TokenSelection } from "./_components/TokenSelector";
 import type { BetResult, GameType } from "./types";
 import type { NextPage } from "next";
+import { zeroAddress } from "viem";
 import { useAccount } from "wagmi";
 import { useScaffoldWatchContractEvent, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
-import { notification } from "~~/utils/scaffold-eth";
+import { getParsedError, notification } from "~~/utils/scaffold-eth";
 
 type CroupierCommitResponse = {
   commit: string;
@@ -26,6 +27,8 @@ const Play: NextPage = () => {
   const { address, isConnected } = useAccount();
   const [selectedGame, setSelectedGame] = useState<GameType>("coinflip");
   const [lastResult, setLastResult] = useState<BetResult | null>(null);
+  const [selectedToken, setSelectedToken] = useState<TokenSelection>({ address: null, symbol: "ETH", decimals: 18 });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { writeContractAsync, isPending } = useScaffoldWriteContract({
     contractName: "YoloFlip",
@@ -40,13 +43,16 @@ const Play: NextPage = () => {
         if (commit === undefined || gambler === undefined || dice === undefined || payout === undefined) continue;
         if (gambler.toLowerCase() !== address?.toLowerCase()) continue;
 
+        const isETH = !token || token === zeroAddress;
         setLastResult({
           commit,
           gambler,
           dice,
           payout,
           modulo: modulo ?? 2n,
-          token: token ?? "0x0000000000000000000000000000000000000000",
+          token: token ?? zeroAddress,
+          tokenSymbol: isETH ? "ETH" : selectedToken.symbol,
+          tokenDecimals: isETH ? 18 : selectedToken.decimals,
         });
         notification.info(payout > 0n ? "You won!" : "Better luck next time!");
       }
@@ -65,13 +71,13 @@ const Play: NextPage = () => {
       return;
     }
 
+    setIsSubmitting(true);
     try {
       const res = await fetch(`${CROUPIER_URL}/api/commit`);
       if (!res.ok) throw new Error("Failed to get commit from croupier");
       const { commit, commitLastBlock, v, r, s } = (await res.json()) as CroupierCommitResponse;
 
       if (token.address) {
-        // ERC20 token bet
         await writeContractAsync({
           functionName: "placeBetWithToken",
           args: [
@@ -88,7 +94,6 @@ const Play: NextPage = () => {
           ],
         });
       } else {
-        // Native ETH bet
         await writeContractAsync({
           functionName: "placeBet",
           args: [
@@ -108,9 +113,14 @@ const Play: NextPage = () => {
       notification.success("Bet placed! Waiting for result...");
     } catch (error) {
       console.error("Failed to place bet:", error);
-      notification.error("Failed to place bet. Is the croupier running?");
+      const parsed = getParsedError(error);
+      notification.error(parsed);
+    } finally {
+      setIsSubmitting(false);
     }
   };
+
+  const isBusy = isPending || isSubmitting;
 
   return (
     <div className="flex items-center flex-col grow pt-10">
@@ -128,7 +138,13 @@ const Play: NextPage = () => {
           <div className="flex flex-col items-center gap-6">
             <GameSelector selectedGame={selectedGame} onSelect={setSelectedGame} />
 
-            <BetForm gameType={selectedGame} onSubmit={handlePlaceBet} isPending={isPending} />
+            <BetForm
+              gameType={selectedGame}
+              onSubmit={handlePlaceBet}
+              isPending={isBusy}
+              selectedToken={selectedToken}
+              onTokenChange={setSelectedToken}
+            />
 
             <GameResult lastResult={lastResult} />
 

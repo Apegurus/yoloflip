@@ -2,7 +2,7 @@
 
 import type { BetResult } from "../types";
 import { getNumberColor } from "./rouletteBets";
-import { formatEther } from "viem";
+import { formatUnits } from "viem";
 
 type GameResultProps = {
   lastResult: BetResult | null;
@@ -26,13 +26,11 @@ export const GameResult = ({ lastResult }: GameResultProps) => {
     );
   }
 
-  const { dice, payout, modulo, token } = lastResult;
+  const { dice, payout, modulo, tokenSymbol, tokenDecimals } = lastResult;
   const won = payout > 0n;
   const isCoinflip = modulo === 2n;
   const isDice = modulo === 6n;
   const isRoulette = modulo === 37n;
-  const isETH = !token || token === "0x0000000000000000000000000000000000000000";
-  const payoutLabel = isETH ? "ETH" : "tokens";
 
   const renderResult = () => {
     if (isCoinflip) {
@@ -84,7 +82,7 @@ export const GameResult = ({ lastResult }: GameResultProps) => {
         {renderResult()}
         {won && (
           <p className="font-bold text-xl">
-            Payout: {formatEther(payout)} {payoutLabel}
+            Payout: {formatUnits(payout, tokenDecimals)} {tokenSymbol}
           </p>
         )}
       </div>
