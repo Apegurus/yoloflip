@@ -22,6 +22,7 @@ type TokenSelectorProps = {
   betAmount: string;
   customTokens?: TokenSelection[];
   onNeedsApprovalChange?: (needsApproval: boolean) => void;
+  onAllowanceLoadingChange?: (loading: boolean) => void;
 };
 
 export const TokenSelector = ({
@@ -30,6 +31,7 @@ export const TokenSelector = ({
   betAmount,
   customTokens = [],
   onNeedsApprovalChange,
+  onAllowanceLoadingChange,
 }: TokenSelectorProps) => {
   const { address: userAddress } = useAccount();
   const { data: contractInfo } = useDeployedContractInfo({ contractName: "YoloFlip" });
@@ -59,15 +61,7 @@ export const TokenSelector = ({
     query: { enabled: !!selected.address && !!userAddress && !!contractInfo },
   });
 
-  // ERC20 decimals
-  const { data: tokenDecimals } = useReadContract({
-    address: selected.address ?? undefined,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: { enabled: !!selected.address },
-  });
-
-  const decimals = selected.address ? (tokenDecimals ?? 18) : 18;
+  const decimals = selected.decimals;
 
   const { writeContractAsync: approveAsync, isPending: isApproving } = useWriteContract();
 
@@ -79,9 +73,15 @@ export const TokenSelector = ({
   }
   const needsApproval = selected.address && allowance !== undefined && allowance < betAmountWei;
 
+  const isAllowanceLoading = !!selected.address && !!userAddress && !!contractInfo && allowance === undefined;
+
   useEffect(() => {
     onNeedsApprovalChange?.(!!needsApproval);
   }, [needsApproval, onNeedsApprovalChange]);
+
+  useEffect(() => {
+    onAllowanceLoadingChange?.(isAllowanceLoading);
+  }, [isAllowanceLoading, onAllowanceLoadingChange]);
 
   const handleApprove = async () => {
     if (!selected.address || !contractInfo) return;
@@ -131,6 +131,13 @@ export const TokenSelector = ({
           {isApproving && <span className="loading loading-spinner loading-xs" />}
           Approve {selected.symbol}
         </button>
+      )}
+
+      {isAllowanceLoading && betAmountWei > 0n && (
+        <div className="flex items-center gap-2 text-sm opacity-70">
+          <span className="loading loading-spinner loading-xs" />
+          Checking allowance...
+        </div>
       )}
     </div>
   );

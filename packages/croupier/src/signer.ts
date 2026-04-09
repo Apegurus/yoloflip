@@ -63,7 +63,7 @@ export function createSignerRouter(
       //    This matches the contract's ECDSA.recover which uses the raw hash.
       const sig = secretSignerWallet.signingKey.sign(ethers.getBytes(msgHash));
 
-      // 6. Store the reveal in memory for settlement
+      // 6. Persist the reveal to the database for settlement
       storeReveal(commitHex, reveal);
 
       // 7. Return the signed commit data

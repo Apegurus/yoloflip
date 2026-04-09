@@ -30,6 +30,7 @@ export const BetForm = ({
 }: BetFormProps) => {
   const [betAmountEth, setBetAmountEth] = useState("");
   const [tokenNeedsApproval, setTokenNeedsApproval] = useState(false);
+  const [tokenAllowanceLoading, setTokenAllowanceLoading] = useState(false);
   const prevTokenRef = useRef(selectedToken.address);
 
   useEffect(() => {
@@ -267,6 +268,7 @@ export const BetForm = ({
             betAmount={betAmountEth}
             customTokens={customTokens}
             onNeedsApprovalChange={setTokenNeedsApproval}
+            onAllowanceLoadingChange={setTokenAllowanceLoading}
           />
         </div>
 
@@ -293,10 +295,22 @@ export const BetForm = ({
         <button
           className="btn btn-primary w-full"
           onClick={handleSubmit}
-          disabled={isPending || !betAmountEth || (gameType === "roulette" && !rouletteBet) || tokenNeedsApproval}
+          disabled={
+            isPending ||
+            !betAmountEth ||
+            (gameType === "roulette" && !rouletteBet) ||
+            tokenNeedsApproval ||
+            tokenAllowanceLoading
+          }
         >
           {isPending && <span className="loading loading-spinner loading-sm" />}
-          {isPending ? "Placing Bet..." : tokenNeedsApproval ? "Approve Token First" : "Place Bet"}
+          {isPending
+            ? "Placing Bet..."
+            : tokenNeedsApproval
+              ? "Approve Token First"
+              : tokenAllowanceLoading
+                ? "Checking Allowance..."
+                : "Place Bet"}
         </button>
       </div>
     </div>

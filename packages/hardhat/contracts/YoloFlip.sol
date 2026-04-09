@@ -223,7 +223,10 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         // Freeze possibleWinAmount at placement time (immune to later houseEdgeBP changes)
         uint256 possibleWinAmount = getWinAmount(p.amount, p.modulo, rollUnder);
         if (possibleWinAmount > type(uint128).max) revert AmountOverflow();
-        uint256 availableBankroll = _bankroll(p.token) - lockedInBets[p.token];
+        uint256 bankroll = _bankroll(p.token);
+        uint256 locked = lockedInBets[p.token];
+        if (bankroll <= locked) revert InsufficientFunds();
+        uint256 availableBankroll = bankroll - locked;
         if (possibleWinAmount - p.amount > (availableBankroll * maxProfitRatio) / 10000) {
             revert ProfitExceedsMax();
         }
@@ -398,7 +401,9 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         address token
     ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         if (recipient == address(0)) revert ZeroAddress();
-        uint256 available = _bankroll(token) - lockedInBets[token];
+        uint256 wBankroll = _bankroll(token);
+        uint256 wLocked = lockedInBets[token];
+        uint256 available = wBankroll > wLocked ? wBankroll - wLocked : 0;
         if (amount > available) revert WithdrawTooLarge();
         emit HouseFundsWithdrawn(recipient, amount, token);
         if (token == ETH_TOKEN) {

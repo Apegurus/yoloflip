@@ -5,6 +5,7 @@ import { getReveal, deleteReveal, getAllReveals, countReveals } from "./revealSt
 
 const RETRY_INTERVAL_MS = 30_000;
 const MAX_SETTLEMENT_RETRIES = 5;
+const BET_EXPIRATION_BLOCKS = 256;
 const inFlight = new Set<string>();
 const failureCounts = new Map<string, number>();
 
@@ -104,7 +105,7 @@ async function retrySweep(contract: ethers.Contract, provider: ethers.Provider):
       const placeBlockNumber = Number(bet.placeBlockNumber);
       const currentBlock = await provider.getBlockNumber();
 
-      if (currentBlock > placeBlockNumber + 250) {
+      if (currentBlock > placeBlockNumber + BET_EXPIRATION_BLOCKS) {
         console.log(`[Settler] Reveal ${commit} expired, removing`);
         deleteReveal(commit);
         failureCounts.delete(commit);
@@ -139,9 +140,9 @@ async function settleBetOnChain(
   const placeBlockNumber = Number(bet.placeBlockNumber);
   const currentBlock = await provider.getBlockNumber();
 
-  if (currentBlock > placeBlockNumber + 250) {
+  if (currentBlock > placeBlockNumber + BET_EXPIRATION_BLOCKS) {
     console.warn(
-      `[Settler] Bet expired at block ${placeBlockNumber + 250}, current: ${currentBlock}`,
+      `[Settler] Bet expired at block ${placeBlockNumber + BET_EXPIRATION_BLOCKS}, current: ${currentBlock}`,
     );
     return;
   }

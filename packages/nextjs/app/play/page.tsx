@@ -6,6 +6,7 @@ import { BetHistory } from "./_components/BetHistory";
 import { GameResult } from "./_components/GameResult";
 import { GameSelector } from "./_components/GameSelector";
 import type { TokenSelection } from "./_components/TokenSelector";
+import { useAllowedTokens } from "./_hooks/useAllowedTokens";
 import type { BetResult, GameType } from "./types";
 import type { NextPage } from "next";
 import { zeroAddress } from "viem";
@@ -29,6 +30,8 @@ const Play: NextPage = () => {
   const [lastResult, setLastResult] = useState<BetResult | null>(null);
   const [selectedToken, setSelectedToken] = useState<TokenSelection>({ address: null, symbol: "ETH", decimals: 18 });
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const { tokens: allowedTokens } = useAllowedTokens();
 
   const { writeContractAsync, isPending } = useScaffoldWriteContract({
     contractName: "YoloFlip",
@@ -145,6 +148,7 @@ const Play: NextPage = () => {
               isPending={isBusy}
               selectedToken={selectedToken}
               onTokenChange={setSelectedToken}
+              customTokens={allowedTokens}
             />
 
             <GameResult lastResult={lastResult} />
