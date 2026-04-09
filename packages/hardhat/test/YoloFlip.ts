@@ -1024,4 +1024,116 @@ describe("YoloFlip", function () {
 
     await ethers.provider.send("hardhat_stopImpersonatingAccount", [rejectorAddress]);
   });
+
+  it("should revert settleBet with wrong block hash (BlockHashMismatch)", async function () {
+    const placed = await placeBet({ player, betMask: 1n, modulo: 2n });
+    await mine(1);
+    const wrongBlockHash = ethers.keccak256(ethers.toUtf8Bytes("wrong"));
+    await expect(yoloFlip.connect(croupier).settleBet(placed.reveal, wrongBlockHash)).to.be.revertedWithCustomError(
+      yoloFlip,
+      "BlockHashMismatch",
+    );
+  });
+
+  it("should revert double-settle of the same bet (BetDoesNotExist)", async function () {
+    const placed = await placeBet({ player, betMask: 1n, modulo: 2n });
+    const { blockHash } = await settleBet(placed.reveal, placed.receipt.blockNumber);
+    await expect(yoloFlip.connect(croupier).settleBet(placed.reveal, blockHash)).to.be.revertedWithCustomError(
+      yoloFlip,
+      "BetDoesNotExist",
+    );
+  });
+
+  it("should revert settleBet after expiry (BetExpired)", async function () {
+    const placed = await placeBet({ player, betMask: 1n, modulo: 2n });
+    await mine(257);
+    const placeBlock = await ethers.provider.getBlock(placed.receipt.blockNumber);
+    await expect(yoloFlip.connect(croupier).settleBet(placed.reveal, placeBlock!.hash!)).to.be.revertedWithCustomError(
+      yoloFlip,
+      "BetExpired",
+    );
+  });
+
+  it("should revert all admin functions when called by non-admin", async function () {
+    const DEFAULT_ADMIN_ROLE = ethers.ZeroHash;
+
+    await expect(yoloFlip.connect(player).setHouseEdge(100n))
+      .to.be.revertedWithCustomError(yoloFlip, "AccessControlUnauthorizedAccount")
+      .withArgs(player.address, DEFAULT_ADMIN_ROLE);
+
+    await expect(yoloFlip.connect(player).setMinBet(1n)).to.be.revertedWithCustomError(
+      yoloFlip,
+      "AccessControlUnauthorizedAccount",
+    );
+
+    await expect(yoloFlip.connect(player).setMaxProfitRatio(100n)).to.be.revertedWithCustomError(
+      yoloFlip,
+      "AccessControlUnauthorizedAccount",
+    );
+
+    await expect(yoloFlip.connect(player).setSecretSigner(player.address)).to.be.revertedWithCustomError(
+      yoloFlip,
+      "AccessControlUnauthorizedAccount",
+    );
+
+    await expect(
+      yoloFlip.connect(player).withdrawHouseFunds(player.address, 1n, ETH_TOKEN),
+    ).to.be.revertedWithCustomError(yoloFlip, "AccessControlUnauthorizedAccount");
+
+    await expect(yoloFlip.connect(player).setAllowedToken(player.address, true)).to.be.revertedWithCustomError(
+      yoloFlip,
+      "AccessControlUnauthorizedAccount",
+    );
+
+    await expect(yoloFlip.connect(player).setTokenMinBet(ETH_TOKEN, 1n)).to.be.revertedWithCustomError(
+      yoloFlip,
+      "AccessControlUnauthorizedAccount",
+    );
+
+    await expect(yoloFlip.connect(player).pause()).to.be.revertedWithCustomError(
+      yoloFlip,
+      "AccessControlUnauthorizedAccount",
+    );
+  });
+
+  it("should verify ERC20 winning payout is sent (not pending)", async function () {
+    const tokenAddr = await mockToken.getAddress();
+    const result = await findOutcomeTokenBet(true, 1n, 2n);
+
+    const playerBalBefore = await mockToken.balanceOf(player.address);
+    await yoloFlip.connect(croupier).settleBet(result.reveal, result.blockHash);
+    const playerBalAfter = await mockToken.balanceOf(player.address);
+
+    expect(playerBalAfter).to.be.gt(playerBalBefore);
+    expect(await yoloFlip.pendingPayouts(player.address, tokenAddr)).to.equal(0n);
+  });
+
+  it("should reject setMaxProfitRatio(1001) and accept 1000", async function () {
+    await expect(yoloFlip.connect(admin).setMaxProfitRatio(1001n)).to.be.revertedWithCustomError(
+      yoloFlip,
+      "InvalidMaxProfitRatio",
+    );
+    await expect(yoloFlip.connect(admin).setMaxProfitRatio(1000n)).to.not.be.reverted;
+    await yoloFlip.connect(admin).setMaxProfitRatio(500n);
+  });
+
+  it("should re-enable betting after unpause", async function () {
+    await yoloFlip.connect(admin).pause();
+    const reveal = generateReveal();
+    const commit = revealToCommit(reveal);
+    const block = await ethers.provider.getBlock("latest");
+    const commitLastBlock = BigInt(block!.number + 100);
+    const contractAddress = await yoloFlip.getAddress();
+    const { v, r, s } = await signCommit(secretSignerWallet, commitLastBlock, commit, contractAddress);
+
+    await expect(
+      yoloFlip.connect(player).placeBet(1n, 2n, false, commitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
+    ).to.be.revertedWithCustomError(yoloFlip, "EnforcedPause");
+
+    await yoloFlip.connect(admin).unpause();
+
+    await expect(
+      yoloFlip.connect(player).placeBet(1n, 2n, false, commitLastBlock, commit, v, r, s, { value: defaultBetAmount }),
+    ).to.not.be.reverted;
+  });
 });

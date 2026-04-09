@@ -46,9 +46,8 @@ export async function startSettler(
         return;
       }
 
-      await waitForBlock(provider, await provider.getBlockNumber(), config.blockWaitMs);
-
       inFlight.add(commitKey);
+      await waitForBlock(provider, await provider.getBlockNumber(), config.blockWaitMs);
       try {
         await enqueueSettlement(() => settleBetOnChain(contract, provider, commit, reveal));
         deleteReveal(commitKey);

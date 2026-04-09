@@ -53,7 +53,7 @@ export const TokenSelector = ({
   });
 
   // ERC20 allowance
-  const { data: allowance } = useReadContract({
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: selected.address ?? undefined,
     abi: erc20Abi,
     functionName: "allowance",
@@ -92,6 +92,7 @@ export const TokenSelector = ({
         functionName: "approve",
         args: [contractInfo.address, betAmountWei],
       });
+      await refetchAllowance();
     } catch (error) {
       console.error("Approve failed:", error);
       const parsed = getParsedError(error);

@@ -232,7 +232,7 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         }
 
         lockedInBets[p.token] += uint128(possibleWinAmount);
-        if (lockedInBets[p.token] > _bankroll(p.token)) revert InsufficientFunds();
+        if (lockedInBets[p.token] > bankroll) revert InsufficientFunds();
 
         bets[p.commit] = Bet({
             amount: p.amount,

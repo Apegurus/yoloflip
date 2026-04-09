@@ -46,17 +46,23 @@ const Play: NextPage = () => {
         if (commit === undefined || gambler === undefined || dice === undefined || payout === undefined) continue;
         if (gambler.toLowerCase() !== address?.toLowerCase()) continue;
 
-        const isETH = !token || token === zeroAddress;
-        // Known limitation: uses current UI token selection, not the token from bet placement
+        const tokenAddr = token ?? zeroAddress;
+        const isETH = tokenAddr === zeroAddress;
+        const tokenMeta = isETH
+          ? { symbol: "ETH", decimals: 18 }
+          : (allowedTokens.find(t => t.address?.toLowerCase() === tokenAddr.toLowerCase()) ?? {
+              symbol: "tokens",
+              decimals: 18,
+            });
         setLastResult({
           commit,
           gambler,
           dice,
           payout,
           modulo: modulo ?? 2n,
-          token: token ?? zeroAddress,
-          tokenSymbol: isETH ? "ETH" : selectedToken.symbol,
-          tokenDecimals: isETH ? 18 : selectedToken.decimals,
+          token: tokenAddr,
+          tokenSymbol: tokenMeta.symbol,
+          tokenDecimals: tokenMeta.decimals,
         });
         notification.info(payout > 0n ? "You won!" : "Better luck next time!");
       }

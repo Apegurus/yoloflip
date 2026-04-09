@@ -31,11 +31,13 @@ export const BetForm = ({
   const [betAmountEth, setBetAmountEth] = useState("");
   const [tokenNeedsApproval, setTokenNeedsApproval] = useState(false);
   const [tokenAllowanceLoading, setTokenAllowanceLoading] = useState(false);
+  const [ethInputKey, setEthInputKey] = useState(0);
   const prevTokenRef = useRef(selectedToken.address);
 
   useEffect(() => {
     if (prevTokenRef.current !== selectedToken.address) {
       setBetAmountEth("");
+      setEthInputKey(k => k + 1);
       prevTokenRef.current = selectedToken.address;
     }
   }, [selectedToken.address]);
@@ -286,6 +288,7 @@ export const BetForm = ({
             />
           ) : (
             <EtherInput
+              key={ethInputKey}
               placeholder="Enter bet amount"
               onValueChange={({ valueInEth }) => setBetAmountEth(valueInEth)}
             />
