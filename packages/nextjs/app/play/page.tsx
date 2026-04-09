@@ -44,6 +44,7 @@ const Play: NextPage = () => {
         if (gambler.toLowerCase() !== address?.toLowerCase()) continue;
 
         const isETH = !token || token === zeroAddress;
+        // Known limitation: uses current UI token selection, not the token from bet placement
         setLastResult({
           commit,
           gambler,

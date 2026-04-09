@@ -4,7 +4,9 @@ import { config } from "./config";
 import { getReveal, deleteReveal, getAllReveals, countReveals } from "./revealStore";
 
 const RETRY_INTERVAL_MS = 30_000;
+const MAX_SETTLEMENT_RETRIES = 5;
 const inFlight = new Set<string>();
+const failureCounts = new Map<string, number>();
 
 // L3: simple sequential nonce queue to prevent nonce conflicts
 let txQueue: Promise<void> = Promise.resolve();
@@ -43,16 +45,17 @@ export async function startSettler(
         return;
       }
 
-      // Wait until at least one block has been mined after bet placement
-      await waitForBlock(provider, await provider.getBlockNumber());
+      await waitForBlock(provider, await provider.getBlockNumber(), config.blockWaitMs);
 
       inFlight.add(commitKey);
       try {
         await enqueueSettlement(() => settleBetOnChain(contract, provider, commit, reveal));
         deleteReveal(commitKey);
+        failureCounts.delete(commitKey);
       } catch (error) {
-        console.error(`[Settler] Failed to settle bet ${commitKey}:`, error);
-        // Will be retried by the sweep
+        const count = (failureCounts.get(commitKey) ?? 0) + 1;
+        failureCounts.set(commitKey, count);
+        console.error(`[Settler] Failed to settle bet ${commitKey} (attempt ${count}/${MAX_SETTLEMENT_RETRIES}):`, error);
       } finally {
         inFlight.delete(commitKey);
       }
@@ -80,13 +83,21 @@ async function retrySweep(contract: ethers.Contract, provider: ethers.Provider):
   for (const { commit, reveal } of reveals) {
     if (inFlight.has(commit)) continue;
 
+    const failures = failureCounts.get(commit) ?? 0;
+    if (failures >= MAX_SETTLEMENT_RETRIES) {
+      console.warn(`[Settler] Commit ${commit} exceeded ${MAX_SETTLEMENT_RETRIES} retries, giving up`);
+      deleteReveal(commit);
+      failureCounts.delete(commit);
+      continue;
+    }
+
     const commitUint = BigInt(commit);
     inFlight.add(commit);
     try {
       const bet = await contract.bets(commitUint);
       if (bet.amount === 0n) {
-        // Bet was already settled or never placed — clean up
         deleteReveal(commit);
+        failureCounts.delete(commit);
         continue;
       }
 
@@ -94,16 +105,19 @@ async function retrySweep(contract: ethers.Contract, provider: ethers.Provider):
       const currentBlock = await provider.getBlockNumber();
 
       if (currentBlock > placeBlockNumber + 250) {
-        // Bet expired — player can refund, clean up reveal
         console.log(`[Settler] Reveal ${commit} expired, removing`);
         deleteReveal(commit);
+        failureCounts.delete(commit);
         continue;
       }
 
       await enqueueSettlement(() => settleBetOnChain(contract, provider, commitUint, reveal));
       deleteReveal(commit);
+      failureCounts.delete(commit);
     } catch (error) {
-      console.error(`[Settler] Retry failed for ${commit}:`, error);
+      const count = (failureCounts.get(commit) ?? 0) + 1;
+      failureCounts.set(commit, count);
+      console.error(`[Settler] Retry failed for ${commit} (attempt ${count}/${MAX_SETTLEMENT_RETRIES}):`, error);
     } finally {
       inFlight.delete(commit);
     }
@@ -151,12 +165,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function waitForBlock(provider: ethers.Provider, minBlock: number): Promise<void> {
-  const maxAttempts = 60;
+async function waitForBlock(provider: ethers.Provider, minBlock: number, pollMs: number): Promise<void> {
+  const maxAttempts = Math.ceil(60_000 / pollMs);
   for (let i = 0; i < maxAttempts; i++) {
     const current = await provider.getBlockNumber();
     if (current > minBlock) return;
-    await sleep(1000);
+    await sleep(pollMs);
   }
   console.warn(`[Settler] Timed out waiting for block > ${minBlock}`);
 }

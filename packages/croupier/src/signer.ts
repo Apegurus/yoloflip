@@ -21,6 +21,11 @@ export function createSignerRouter(
    * Generates a new commit-reveal pair and returns the signed commit to the player.
    * The player uses this to call placeBet on the YoloFlip contract.
    *
+   * No authentication: rate limiting is the only abuse mitigation. Adding auth
+   * (API keys, wallet signatures) would not prevent spam — an attacker can
+   * generate unlimited valid credentials. The reveal DB is pruned hourly,
+   * bounding storage growth from unused commits.
+   *
    * Response:
    *   {
    *     commit: string,          // hex string: keccak256(reveal) as uint256

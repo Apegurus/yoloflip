@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GameType } from "../types";
 import { TokenSelector } from "./TokenSelector";
 import type { TokenSelection } from "./TokenSelector";
@@ -30,6 +30,14 @@ export const BetForm = ({
 }: BetFormProps) => {
   const [betAmountEth, setBetAmountEth] = useState("");
   const [tokenNeedsApproval, setTokenNeedsApproval] = useState(false);
+  const prevTokenRef = useRef(selectedToken.address);
+
+  useEffect(() => {
+    if (prevTokenRef.current !== selectedToken.address) {
+      setBetAmountEth("");
+      prevTokenRef.current = selectedToken.address;
+    }
+  }, [selectedToken.address]);
 
   // Coinflip state
   const [coinflipChoice, setCoinflipChoice] = useState<"heads" | "tails">("heads");
@@ -264,7 +272,22 @@ export const BetForm = ({
 
         {/* ===== BET AMOUNT & SUBMIT ===== */}
         <div className="my-3">
-          <EtherInput placeholder="Enter bet amount" onValueChange={({ valueInEth }) => setBetAmountEth(valueInEth)} />
+          {selectedToken.address ? (
+            <input
+              key={`token-${selectedToken.address}`}
+              type="text"
+              inputMode="decimal"
+              placeholder={`Amount (${selectedToken.symbol})`}
+              className="input input-bordered w-full"
+              value={betAmountEth}
+              onChange={e => setBetAmountEth(e.target.value)}
+            />
+          ) : (
+            <EtherInput
+              placeholder="Enter bet amount"
+              onValueChange={({ valueInEth }) => setBetAmountEth(valueInEth)}
+            />
+          )}
         </div>
 
         <button

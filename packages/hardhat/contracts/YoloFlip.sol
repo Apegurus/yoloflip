@@ -213,6 +213,8 @@ contract YoloFlip is AccessControl, Pausable, ReentrancyGuard {
         uint256 effectiveMinBet = tokenMinBet[p.token] > 0 ? tokenMinBet[p.token] : minBetAmount;
         if (p.amount < effectiveMinBet) revert BetTooSmall();
 
+        // Signature covers (commitLastBlock, commit, contractAddress). Does not include
+        // chainId — replay across chains is bounded by address uniqueness per deployment.
         bytes32 msgHash = keccak256(abi.encodePacked(uint40(p.commitLastBlock), p.commit, address(this)));
         if (ECDSA.recover(msgHash, p.v, p.r, p.s) != secretSigner) revert InvalidSignature();
 
