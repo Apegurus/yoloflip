@@ -1,0 +1,60 @@
+import { HardhatRuntimeEnvironment } from "hardhat/types";
+import { DeployFunction } from "hardhat-deploy/types";
+import { parseEther } from "ethers";
+
+/**
+ * Deploys the YoloFlip commit-reveal gambling contract.
+ * Constructor args: admin, croupier, secretSigner, houseEdgeBP, minBetAmount
+ *
+ * Role addresses can be overridden via environment variables:
+ *   YOLOFLIP_ADMIN         — admin (DEFAULT_ADMIN_ROLE), defaults to deployer
+ *   YOLOFLIP_CROUPIER      — croupier (CROUPIER_ROLE), defaults to deployer
+ *   YOLOFLIP_SECRET_SIGNER — secretSigner, defaults to deployer
+ */
+const deployYoloFlip: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
+  const { deployer } = await hre.getNamedAccounts();
+  const { deploy } = hre.deployments;
+
+  const admin = process.env.YOLOFLIP_ADMIN ?? deployer;
+  const croupier = process.env.YOLOFLIP_CROUPIER ?? deployer;
+  const secretSigner = process.env.YOLOFLIP_SECRET_SIGNER ?? deployer;
+
+  if (admin !== deployer || croupier !== deployer || secretSigner !== deployer) {
+    console.log(`  Admin: ${admin}`);
+    console.log(`  Croupier: ${croupier}`);
+    console.log(`  SecretSigner: ${secretSigner}`);
+  }
+
+  const deployed = await deploy("YoloFlip", {
+    from: deployer,
+    args: [
+      admin, // admin (DEFAULT_ADMIN_ROLE)
+      croupier, // croupier (CROUPIER_ROLE)
+      secretSigner, // secretSigner
+      200, // houseEdgeBP — 2% house edge
+      parseEther("0.001"), // minBetAmount — 0.001 ETH minimum bet
+    ],
+    log: true,
+    autoMine: true,
+  });
+
+  console.log(`YoloFlip deployed at: ${deployed.address}`);
+
+  // Fund the house bankroll on local networks only
+  if (hre.network.name === "localhost" || hre.network.name === "hardhat") {
+    const [funder] = await hre.ethers.getSigners();
+    const tx = await funder.sendTransaction({
+      to: deployed.address,
+      value: parseEther("10"),
+      gasLimit: 50000,
+    });
+    await tx.wait();
+    console.log(`House bankroll funded with 10 ETH`);
+  }
+};
+
+export default deployYoloFlip;
+
+// Tags are useful if you have multiple deploy files and want to run one of them.
+// e.g. yarn deploy --tags YoloFlip
+deployYoloFlip.tags = ["YoloFlip"];
